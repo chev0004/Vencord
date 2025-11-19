@@ -606,13 +606,13 @@ export const Devs = /* #__PURE__*/ Object.freeze({
         name: "thororen",
         id: 848339671629299742n
     },
-    chev: {
-        name: "chev",
-        id: 559278744330698752n
-    },
     alfred: {
         name: "alfred",
         id: 1038466644353232967n
+    },
+    chev: {
+        name: "chev",
+        id: 559278744330698752n
     }
 } satisfies Record<string, Dev>);
 
