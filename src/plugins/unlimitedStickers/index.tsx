@@ -9,12 +9,12 @@ import * as DataStore from "@api/DataStore";
 import { definePluginSettings } from "@api/Settings";
 import { Button } from "@components/Button";
 import { Paragraph } from "@components/Paragraph";
-import { Devs } from "@utils/constants";
+import { Devs, IS_MAC } from "@utils/constants";
 import { Logger } from "@utils/Logger";
 import { ModalCloseButton, ModalContent, ModalHeader, type ModalProps, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import definePlugin, { OptionType } from "@utils/types";
 import { chooseFile, saveFile } from "@utils/web";
-import { Alerts, ChannelStore, React, Toasts, UserStore, Checkbox, ScrollerThin } from "@webpack/common";
+import { Alerts, ChannelStore, React, Toasts, UserStore, Checkbox, ScrollerThin, SelectedChannelStore } from "@webpack/common";
 import { Heading } from "@components/index";
 import { nanoid } from "nanoid";
 
@@ -1120,4 +1120,35 @@ export default definePlugin({
     authors: [Devs.chev],
     settings,
     renderChatBarButton: UnlimitedStickersChatBarIcon,
+
+    onKey(e: KeyboardEvent) {
+        // Ctrl+Alt+S to open unlimited stickers modal
+        if ((e.ctrlKey || (e.metaKey && IS_MAC)) && e.altKey && (e.key === "s" || e.key === "S")) {
+            e.preventDefault();
+            const channelId = SelectedChannelStore.getChannelId();
+            if (!channelId) return;
+
+            const channel = ChannelStore.getChannel(channelId);
+            if (!channel) return;
+
+            const currentUser = UserStore.getCurrentUser();
+            if (currentUser?.premiumType != null) {
+                openStickerPicker(channel);
+            } else {
+                Toasts.show({
+                    message: "This plugin requires a Discord Nitro subscription to upload and send stickers.",
+                    id: Toasts.genId(),
+                    type: Toasts.Type.FAILURE,
+                });
+            }
+        }
+    },
+
+    start() {
+        document.addEventListener("keydown", this.onKey);
+    },
+
+    stop() {
+        document.removeEventListener("keydown", this.onKey);
+    },
 });
