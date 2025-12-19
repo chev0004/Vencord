@@ -53,7 +53,23 @@
 .unlimited-stickers-category-arrow {
     flex-shrink: 0;
     transform: rotate(-90deg);
-    transition: transform 0.2s ease-in-out;
+    transition: transform 0.2s ease-in-out, color 0.1s ease;
+}
+
+.theme-dark .unlimited-stickers-category-arrow {
+    color: var(--interactive-normal, #b9bbbe) !important;
+}
+
+.theme-dark .unlimited-stickers-category-header:hover .unlimited-stickers-category-arrow {
+    color: var(--interactive-hover, #dcddde) !important;
+}
+
+.theme-light .unlimited-stickers-category-arrow {
+    color: var(--interactive-normal, #4f545c) !important;
+}
+
+.theme-light .unlimited-stickers-category-header:hover .unlimited-stickers-category-arrow {
+    color: var(--interactive-hover, #2e3338) !important;
 }
 
 .unlimited-stickers-category-arrow--expanded {

@@ -9,15 +9,16 @@ import * as DataStore from "@api/DataStore";
 import { definePluginSettings } from "@api/Settings";
 import { Button } from "@components/Button";
 import { Paragraph } from "@components/Paragraph";
-import { Devs } from "@utils/constants";
+import { Devs, IS_MAC } from "@utils/constants";
 import { Logger } from "@utils/Logger";
 import { ModalCloseButton, ModalContent, ModalHeader, type ModalProps, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import definePlugin, { OptionType } from "@utils/types";
 import { chooseFile, saveFile } from "@utils/web";
-import { Alerts, ChannelStore, React, Toasts, UserStore, Checkbox, ScrollerThin } from "@webpack/common";
+import { Alerts, ChannelStore, React, Toasts, UserStore, Checkbox, ScrollerThin, SelectedChannelStore } from "@webpack/common";
 import { Heading } from "@components/index";
 import { nanoid } from "nanoid";
 
+import { getPluginIntlMessage } from "./intl";
 import { openStickerPicker } from "./StickerPicker";
 
 export const LIBRARY_KEY = "UnlimitedStickers_library";
@@ -49,39 +50,51 @@ interface FileWithRelativePath extends File {
     readonly webkitRelativePath: string;
 }
 
-const RefreshIcon: React.FC<{ className?: string; width?: number; height?: number; }> = ({
+const RefreshIcon = ({
     className,
     width = 16,
     height = 16,
-}) => (
-    <svg
-        className={className}
-        width={width}
-        height={height}
-        viewBox="0 0 24 24"
-        fill="currentColor"
-        aria-hidden="true"
-    >
-        <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
-    </svg>
-);
+}: {
+    className?: string;
+    width?: number | string;
+    height?: number | string;
+}) => {
+    return (
+        <svg
+            className={className}
+            width={width}
+            height={height}
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+        >
+            <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+        </svg>
+    );
+};
 
-const ReorderIcon: React.FC<{ className?: string; width?: number; height?: number; }> = ({
+const ReorderIcon = ({
     className,
     width = 16,
     height = 16,
-}) => (
-    <svg
-        className={className}
-        width={width}
-        height={height}
-        viewBox="0 0 24 24"
-        fill="currentColor"
-        aria-hidden="true"
-    >
-        <path d="M3 15h18v-2H3v2zm0 4h18v-2H3v2zm0-8h18V9H3v2zm0-6v2h18V5H3z" />
-    </svg>
-);
+}: {
+    className?: string;
+    width?: number | string;
+    height?: number | string;
+}) => {
+    return (
+        <svg
+            className={className}
+            width={width}
+            height={height}
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            aria-hidden="true"
+        >
+            <path d="M3 15h18v-2H3v2zm0 4h18v-2H3v2zm0-8h18V9H3v2zm0-6v2h18V5H3z" />
+        </svg>
+    );
+};
 
 interface ReorderCategoriesModalProps extends ModalProps {
     categories: StickerCategory[];
@@ -1027,64 +1040,70 @@ export const importStickers = async (): Promise<void> => {
     }
 };
 
-const UnlimitedStickerIcon: React.FC<{ className?: string; width?: number; height?: number; }> = ({
+const UnlimitedStickerIcon = ({
     className,
     width = 20,
     height = 20,
-}) => (
-    <svg
-        aria-hidden="true"
-        xmlns="http://www.w3.org/2000/svg"
-        xmlnsXlink="http://www.w3.org/1999/xlink"
-        viewBox="0 0 24 24"
-        width={width}
-        height={height}
-        className={className}
-    >
-        <defs>
-            <clipPath id="c">
-                <path d="M0 0h24v24H0z" />
-            </clipPath>
-            <clipPath id="d">
-                <path d="M0 0h600v600H0z" />
-            </clipPath>
-            <filter id="a" filterUnits="objectBoundingBox" x="0%" y="0%" width="100%" height="100%">
-                <feComponentTransfer in="SourceGraphic">
-                    <feFuncA type="table" tableValues="1.0 0.0" />
-                </feComponentTransfer>
-            </filter>
-            <path
-                fill="#C4C5C9"
-                d="M-5.5-2a1.5 1.5 0 1 0-.001-3.001A1.5 1.5 0 0 0-5.5-2M7-3.5a1.5 1.5 0 1 1-3.001-.001A1.5 1.5 0 0 1 7-3.5M-2.911-.556A1.001 1.001 0 0 0-4.573.556 5.5 5.5 0 0 0 0 3 5.5 5.5 0 0 0 4.573.556 1 1 0 1 0 2.911-.556 3.5 3.5 0 0 1 0 1 3.5 3.5 0 0 1-2.911-.556"
-                transform="matrix(25 0 0 25 300 300)"
-                style={{ display: 'block' }}
-                id="b"
-            />
-            <mask id="e" style={{ maskType: 'alpha' }}>
-                <g filter="url(#a)">
-                    <path fill="#fff" opacity="0" d="M0 0h600v600H0z" />
-                    <use href="#b" />
-                </g>
-            </mask>
-        </defs>
-        <g clipPath="url(#c)">
-            <g clipPath="url(#d)" transform="rotate(.012) scale(.04)" style={{ display: 'block' }}>
-                <g mask="url(#e)" style={{ display: 'block' }}>
-                    <path
-                        fill="#C4C5C9"
-                        d="M150 50h300a100 100 0 0 1 100 100v187.5a12.5 12.5 0 0 1-12.5 12.5H475a125 125 0 0 0-125 125v62.5a12.5 12.5 0 0 1-12.5 12.5H150A100 100 0 0 1 50 450V150A100 100 0 0 1 150 50"
-                    />
-                </g>
-                <g transform="translate(355 355) scale(10)">
-                    <path
-                        d="m8.121 9.879 2.083 2.083.007-.006 1.452 1.452.006.006 2.122 2.122a5 5 0 1 0 0-7.072l-.714.714 1.415 1.414.713-.713a3 3 0 1 1 0 4.242l-2.072-2.072-.007.006-3.59-3.59a5 5 0 1 0 0 7.07l.713-.713-1.414-1.414-.714.713a3 3 0 1 1 0-4.242"
-                        fill="#C4C5C9"
-                    />
+}: {
+    className?: string;
+    width?: number | string;
+    height?: number | string;
+}) => {
+    return (
+        <svg
+            aria-hidden="true"
+            xmlns="http://www.w3.org/2000/svg"
+            xmlnsXlink="http://www.w3.org/1999/xlink"
+            viewBox="0 0 24 24"
+            width={width}
+            height={height}
+            className={className}
+        >
+            <defs>
+                <clipPath id="c">
+                    <path d="M0 0h24v24H0z" />
+                </clipPath>
+                <clipPath id="d">
+                    <path d="M0 0h600v600H0z" />
+                </clipPath>
+                <filter id="a" filterUnits="objectBoundingBox" x="0%" y="0%" width="100%" height="100%">
+                    <feComponentTransfer in="SourceGraphic">
+                        <feFuncA type="table" tableValues="1.0 0.0" />
+                    </feComponentTransfer>
+                </filter>
+                <path
+                    fill="currentColor"
+                    d="M-5.5-2a1.5 1.5 0 1 0-.001-3.001A1.5 1.5 0 0 0-5.5-2M7-3.5a1.5 1.5 0 1 1-3.001-.001A1.5 1.5 0 0 1 7-3.5M-2.911-.556A1.001 1.001 0 0 0-4.573.556 5.5 5.5 0 0 0 0 3 5.5 5.5 0 0 0 4.573.556 1 1 0 1 0 2.911-.556 3.5 3.5 0 0 1 0 1 3.5 3.5 0 0 1-2.911-.556"
+                    transform="matrix(25 0 0 25 300 300)"
+                    style={{ display: 'block' }}
+                    id="b"
+                />
+                <mask id="e" style={{ maskType: 'alpha' }}>
+                    <g filter="url(#a)">
+                        <path fill="#fff" opacity="0" d="M0 0h600v600H0z" />
+                        <use href="#b" />
+                    </g>
+                </mask>
+            </defs>
+            <g clipPath="url(#c)">
+                <g clipPath="url(#d)" transform="rotate(.012) scale(.04)" style={{ display: 'block' }}>
+                    <g mask="url(#e)" style={{ display: 'block' }}>
+                        <path
+                            fill="currentColor"
+                            d="M150 50h300a100 100 0 0 1 100 100v187.5a12.5 12.5 0 0 1-12.5 12.5H475a125 125 0 0 0-125 125v62.5a12.5 12.5 0 0 1-12.5 12.5H150A100 100 0 0 1 50 450V150A100 100 0 0 1 150 50"
+                        />
+                    </g>
+                    <g transform="translate(355 355) scale(10)">
+                        <path
+                            d="m8.121 9.879 2.083 2.083.007-.006 1.452 1.452.006.006 2.122 2.122a5 5 0 1 0 0-7.072l-.714.714 1.415 1.414.713-.713a3 3 0 1 1 0 4.242l-2.072-2.072-.007.006-3.59-3.59a5 5 0 1 0 0 7.07l.713-.713-1.414-1.414-.714.713a3 3 0 1 1 0-4.242"
+                            fill="currentColor"
+                        />
+                    </g>
                 </g>
             </g>
-        </g>
-    </svg>
-);
+        </svg>
+    );
+};
 
 export const UnlimitedStickersChatBarIcon: ChatBarButtonFactory = (props) => {
     const channel = ChannelStore.getChannel(props.channel.id);
@@ -1096,7 +1115,7 @@ export const UnlimitedStickersChatBarIcon: ChatBarButtonFactory = (props) => {
             openStickerPicker(channel);
         } else {
             Toasts.show({
-                message: "This plugin requires a Discord Nitro subscription to upload and send stickers.",
+                message: getPluginIntlMessage("NITRO_REQUIRED_BODY"),
                 id: Toasts.genId(),
                 type: Toasts.Type.FAILURE,
             });
@@ -1105,7 +1124,7 @@ export const UnlimitedStickersChatBarIcon: ChatBarButtonFactory = (props) => {
 
     return (
         <ChatBarButton
-            tooltip="Open Unlimited Sticker Picker"
+            tooltip={getPluginIntlMessage("OPEN_LOCAL_STICKER_PICKER")}
             onClick={handleButtonClick}
         >
             <UnlimitedStickerIcon width={20} height={20} />
@@ -1119,5 +1138,39 @@ export default definePlugin({
         "Send local images as stickers by temporarily uploading them to a private server.",
     authors: [Devs.chev],
     settings,
-    renderChatBarButton: UnlimitedStickersChatBarIcon,
+    chatBarButton: {
+        render: UnlimitedStickersChatBarIcon,
+        icon: UnlimitedStickerIcon,
+    },
+
+    onKey(e: KeyboardEvent) {
+        // Ctrl+Alt+S to open unlimited stickers modal
+        if ((e.ctrlKey || (e.metaKey && IS_MAC)) && e.altKey && (e.key === "s" || e.key === "S")) {
+            e.preventDefault();
+            const channelId = SelectedChannelStore.getChannelId();
+            if (!channelId) return;
+
+            const channel = ChannelStore.getChannel(channelId);
+            if (!channel) return;
+
+            const currentUser = UserStore.getCurrentUser();
+            if (currentUser?.premiumType != null) {
+                openStickerPicker(channel);
+            } else {
+                Toasts.show({
+                    message: "This plugin requires a Discord Nitro subscription to upload and send stickers.",
+                    id: Toasts.genId(),
+                    type: Toasts.Type.FAILURE,
+                });
+            }
+        }
+    },
+
+    start() {
+        document.addEventListener("keydown", this.onKey);
+    },
+
+    stop() {
+        document.removeEventListener("keydown", this.onKey);
+    },
 });
