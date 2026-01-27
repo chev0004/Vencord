@@ -9,8 +9,47 @@
 
 import * as DataStore from "@api/DataStore";
 
+import { LanguageTransformer, japaneseTransforms } from "./logic";
+
 const DICTIONARY_KEY = "Yomicord_Dictionaries";
 const DICTIONARY_INDEX_KEY = "Yomicord_Dictionary_Index";
+
+// Singleton transformer instance for deinflection
+let transformer: LanguageTransformer | null = null;
+
+function getTransformer(): LanguageTransformer {
+    if (!transformer) {
+        transformer = new LanguageTransformer();
+        transformer.addDescriptor(japaneseTransforms);
+    }
+    return transformer;
+}
+
+/**
+ * Generates deinflection candidates for a Japanese term
+ * Uses Yomitan's actual transformation rules (1700+ lines of rules!)
+ * Returns array of possible dictionary forms to search
+ */
+function getDeinflectionCandidates(text: string): string[] {
+    const candidates: string[] = [text]; // Always try the original text first
+
+    try {
+        const transformer = getTransformer();
+        const results = transformer.transform(text);
+
+        // Extract unique text forms from the results
+        for (const result of results) {
+            if (result.text !== text && !candidates.includes(result.text)) {
+                candidates.push(result.text);
+            }
+        }
+    } catch (error) {
+        console.error('Deinflection error:', error);
+        // Fall back to just returning the original text
+    }
+
+    return candidates;
+}
 
 export interface DictionaryEntry {
     term: string;           // The word itself (e.g., "食べる")
@@ -70,9 +109,6 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
     const indexStartTime = performance.now();
     const index = await getDictionaryIndex();
     console.log(`[Dictionary] ⏱️  getDictionaryIndex took ${(performance.now() - indexStartTime).toFixed(2)}ms`);
-
-    // Import deinflection
-    const { getDeinflectionCandidates } = await import("./deinflection");
 
     // Check if text contains kanji
     const hasKanji = /[\u4E00-\u9FFF]/.test(text);
@@ -673,11 +709,12 @@ export async function searchInDictionary(dictionaryName: string, term: string, m
 
     // For prefix matching, search through all entries (original behavior)
     // Search by first character of term (expression index)
-    // This finds entries where the TERM starts with the search text
+    // This finds entries where the TERM or READING starts with the search text
+    // Combined into a single loop to avoid iterating the same data twice
     const termData = await getDataStoreData(dictionaryName, term[0]);
 
     if (termData) {
-        // Search through all entries in this bucket
+        // Single loop that checks both term and reading matches
         for (const indexKey in termData) {
             const entries = termData[indexKey] as DictionaryEntry[];
             if (!Array.isArray(entries)) continue;
@@ -685,44 +722,27 @@ export async function searchInDictionary(dictionaryName: string, term: string, m
             for (const entry of entries) {
                 if (!entry || typeof entry.term !== 'string') continue;
 
+                const key = `${entry.term}|${entry.reading}`;
+                let shouldAdd = false;
+
                 // Check if term matches (prefix matching)
                 // Progressive shortening in lookupTerm handles finding substrings
                 if (entry.term.startsWith(term)) {
-                    const key = `${entry.term}|${entry.reading}`;
-                    if (!seen.has(key)) {
-                        results.push(entry);
-                        seen.add(key);
-                    }
+                    shouldAdd = true;
                 }
-            }
-        }
-    }
-
-    // Search by reading index
-    // Entries are indexed by first character of reading, so we search the bucket for first char
-    // But for prefix matching, we need to check if any reading in that bucket starts with our term
-    // Reuse the same data since reading index uses the same first character
-    const readingData = termData; // Same data object, already cached
-
-    if (readingData) {
-        for (const indexKey in readingData) {
-            const entries = readingData[indexKey] as DictionaryEntry[];
-            if (!Array.isArray(entries)) continue;
-
-            for (const entry of entries) {
-                if (!entry || typeof entry.term !== 'string') continue;
 
                 // Check if reading matches (prefix matching)
-                if (entry.reading && typeof entry.reading === 'string') {
+                if (!shouldAdd && entry.reading && typeof entry.reading === 'string') {
                     // For prefix matching: entry reading must start with search text
                     // Progressive shortening in lookupTerm handles finding substrings
                     if (entry.reading.startsWith(term)) {
-                        const entryKey = `${entry.term}|${entry.reading}`;
-                        if (!seen.has(entryKey)) {
-                            results.push(entry);
-                            seen.add(entryKey);
-                        }
+                        shouldAdd = true;
                     }
+                }
+
+                if (shouldAdd && !seen.has(key)) {
+                    results.push(entry);
+                    seen.add(key);
                 }
             }
         }

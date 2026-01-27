@@ -15,14 +15,369 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import {suffixInflection} from '../language-transforms.js';
+interface Transform {
+    id: string;
+    name: string;
+    description?: string;
+    rules: Rule[];
+    heuristic: RegExp;
+}
+
+interface Rule {
+    type: string;
+    isInflected: RegExp;
+    deinflect: (text: string) => string;
+    conditionsIn: number;
+    conditionsOut: number;
+}
+
+interface TraceFrame {
+    transform: string;
+    ruleIndex: number;
+    text: string;
+}
+
+type Trace = TraceFrame[];
+
+interface TransformedText {
+    text: string;
+    conditions: number;
+    trace: Trace;
+}
+
+interface LanguageTransformDescriptor {
+    conditions: Record<string, { isDictionaryForm?: boolean; subConditions?: string[]; }>;
+    transforms: Record<string, {
+        name: string;
+        description?: string;
+        rules: Array<{
+            type: string;
+            isInflected: RegExp;
+            deinflect: (text: string) => string;
+            conditionsIn: string[];
+            conditionsOut: string[];
+        }>;
+    }>;
+}
+
+type ConditionMapEntries = Array<[string, { isDictionaryForm?: boolean; subConditions?: string[]; }]>;
+
+export class LanguageTransformer {
+    private _nextFlagIndex: number;
+    private _transforms: Transform[];
+    private _conditionTypeToConditionFlagsMap: Map<string, number>;
+    private _partOfSpeechToConditionFlagsMap: Map<string, number>;
+
+    constructor() {
+        this._nextFlagIndex = 0;
+        this._transforms = [];
+        this._conditionTypeToConditionFlagsMap = new Map();
+        this._partOfSpeechToConditionFlagsMap = new Map();
+    }
+
+    /** */
+    clear() {
+        this._nextFlagIndex = 0;
+        this._transforms = [];
+        this._conditionTypeToConditionFlagsMap.clear();
+        this._partOfSpeechToConditionFlagsMap.clear();
+    }
+
+    /**
+     * @param {LanguageTransformDescriptor} descriptor
+     * @throws {Error}
+     */
+    addDescriptor(descriptor: LanguageTransformDescriptor) {
+        const { conditions, transforms } = descriptor;
+        const conditionEntries = Object.entries(conditions) as ConditionMapEntries;
+        const { conditionFlagsMap, nextFlagIndex } = this._getConditionFlagsMap(conditionEntries, this._nextFlagIndex);
+
+        const transforms2: Transform[] = [];
+
+        for (const [transformId, transform] of Object.entries(transforms)) {
+            const { name, description, rules } = transform;
+            const rules2: Rule[] = [];
+            for (let j = 0, jj = rules.length; j < jj; ++j) {
+                const { type, isInflected, deinflect, conditionsIn, conditionsOut } = rules[j];
+                const conditionFlagsIn = this._getConditionFlagsStrict(conditionFlagsMap, conditionsIn);
+                if (conditionFlagsIn === null) { throw new Error(`Invalid conditionsIn for transform ${transformId}.rules[${j}]`); }
+                const conditionFlagsOut = this._getConditionFlagsStrict(conditionFlagsMap, conditionsOut);
+                if (conditionFlagsOut === null) { throw new Error(`Invalid conditionsOut for transform ${transformId}.rules[${j}]`); }
+                rules2.push({
+                    type,
+                    isInflected,
+                    deinflect,
+                    conditionsIn: conditionFlagsIn,
+                    conditionsOut: conditionFlagsOut,
+                });
+            }
+            const isInflectedTests = rules.map((rule) => rule.isInflected);
+            const heuristic = new RegExp(isInflectedTests.map((regExp) => regExp.source).join('|'));
+            transforms2.push({ id: transformId, name, description, rules: rules2, heuristic });
+        }
+
+        this._nextFlagIndex = nextFlagIndex;
+        for (const transform of transforms2) {
+            this._transforms.push(transform);
+        }
+
+        for (const [type, condition] of conditionEntries) {
+            const flags = conditionFlagsMap.get(type);
+            if (typeof flags === 'undefined') { continue; } // This case should never happen
+            this._conditionTypeToConditionFlagsMap.set(type, flags);
+            if (condition.isDictionaryForm) {
+                this._partOfSpeechToConditionFlagsMap.set(type, flags);
+            }
+        }
+    }
+
+    /**
+     * @param {string[]} partsOfSpeech
+     * @returns {number}
+     */
+    getConditionFlagsFromPartsOfSpeech(partsOfSpeech: string[]): number {
+        return this._getConditionFlags(this._partOfSpeechToConditionFlagsMap, partsOfSpeech);
+    }
+
+    /**
+     * @param {string[]} conditionTypes
+     * @returns {number}
+     */
+    getConditionFlagsFromConditionTypes(conditionTypes: string[]): number {
+        return this._getConditionFlags(this._conditionTypeToConditionFlagsMap, conditionTypes);
+    }
+
+    /**
+     * @param {string} conditionType
+     * @returns {number}
+     */
+    getConditionFlagsFromConditionType(conditionType: string): number {
+        return this._getConditionFlags(this._conditionTypeToConditionFlagsMap, [conditionType]);
+    }
+
+    /**
+     * @param {string} sourceText
+     * @returns {TransformedText[]}
+     */
+    transform(sourceText: string): TransformedText[] {
+        const results = [LanguageTransformer.createTransformedText(sourceText, 0, [])];
+        for (let i = 0; i < results.length; ++i) {
+            const { text, conditions, trace } = results[i];
+            for (const transform of this._transforms) {
+                if (!transform.heuristic.test(text)) { continue; }
+
+                const { id, rules } = transform;
+                for (let j = 0, jj = rules.length; j < jj; ++j) {
+                    const rule = rules[j];
+                    if (!LanguageTransformer.conditionsMatch(conditions, rule.conditionsIn)) { continue; }
+                    const { isInflected, deinflect } = rule;
+                    if (!isInflected.test(text)) { continue; }
+
+                    const isCycle = trace.some((frame) => frame.transform === id && frame.ruleIndex === j && frame.text === text);
+                    if (isCycle) {
+                        console.warn(`Cycle detected in transform[${id}] rule[${j}] for text: ${text}\nTrace: ${JSON.stringify(trace)}`);
+                        continue;
+                    }
+
+                    results.push(LanguageTransformer.createTransformedText(
+                        deinflect(text),
+                        rule.conditionsOut,
+                        this._extendTrace(trace, { transform: id, ruleIndex: j, text }),
+                    ));
+                }
+            }
+        }
+        return results;
+    }
+
+    /**
+     * @param {string[]} inflectionRules
+     * @returns {Array<{name: string; description?: string}>}
+     */
+    getUserFacingInflectionRules(inflectionRules: string[]): Array<{ name: string; description?: string; }> {
+        return inflectionRules.map((rule) => {
+            const fullRule = this._transforms.find((transform) => transform.id === rule);
+            if (typeof fullRule === 'undefined') { return { name: rule }; }
+            const { name, description } = fullRule;
+            return description ? { name, description } : { name };
+        });
+    }
+
+    /**
+     * @param {string} text
+     * @param {number} conditions
+     * @param {Trace} trace
+     * @returns {TransformedText}
+     */
+    static createTransformedText(text: string, conditions: number, trace: Trace): TransformedText {
+        return { text, conditions, trace };
+    }
+
+    /**
+     * If `currentConditions` is `0`, then `nextConditions` is ignored and `true` is returned.
+     * Otherwise, there must be at least one shared condition between `currentConditions` and `nextConditions`.
+     * @param {number} currentConditions
+     * @param {number} nextConditions
+     * @returns {boolean}
+     */
+    static conditionsMatch(currentConditions: number, nextConditions: number): boolean {
+        return currentConditions === 0 || (currentConditions & nextConditions) !== 0;
+    }
+
+    /**
+     * @param {ConditionMapEntries} conditions
+     * @param {number} nextFlagIndex
+     * @returns {{conditionFlagsMap: Map<string, number>, nextFlagIndex: number}}
+     * @throws {Error}
+     */
+    _getConditionFlagsMap(conditions: ConditionMapEntries, nextFlagIndex: number): { conditionFlagsMap: Map<string, number>; nextFlagIndex: number; } {
+        const conditionFlagsMap = new Map<string, number>();
+        let targets = conditions;
+        while (targets.length > 0) {
+            const nextTargets: ConditionMapEntries = [];
+            for (const target of targets) {
+                const [type, condition] = target;
+                const { subConditions } = condition;
+                let flags = 0;
+                if (typeof subConditions === 'undefined') {
+                    if (nextFlagIndex >= 32) {
+                        // Flags greater than or equal to 32 don't work because JavaScript only supports up to 32-bit integer operations
+                        throw new Error('Maximum number of conditions was exceeded');
+                    }
+                    flags = 1 << nextFlagIndex;
+                    ++nextFlagIndex;
+                } else {
+                    const multiFlags = this._getConditionFlagsStrict(conditionFlagsMap, subConditions);
+                    if (multiFlags === null) {
+                        nextTargets.push(target);
+                        continue;
+                    } else {
+                        flags = multiFlags;
+                    }
+                }
+                conditionFlagsMap.set(type, flags);
+            }
+            if (nextTargets.length === targets.length) {
+                // Cycle in subRule declaration
+                throw new Error('Maximum number of conditions was exceeded');
+            }
+            targets = nextTargets;
+        }
+        return { conditionFlagsMap, nextFlagIndex };
+    }
+
+    /**
+     * @param {Map<string, number>} conditionFlagsMap
+     * @param {string[]} conditionTypes
+     * @returns {number | null}
+     */
+    _getConditionFlagsStrict(conditionFlagsMap: Map<string, number>, conditionTypes: string[]): number | null {
+        let flags = 0;
+        for (const conditionType of conditionTypes) {
+            const flags2 = conditionFlagsMap.get(conditionType);
+            if (typeof flags2 === 'undefined') {
+                return null;
+            }
+            flags |= flags2;
+        }
+        return flags;
+    }
+
+    /**
+     * @param {Map<string, number>} conditionFlagsMap
+     * @param {string[]} conditionTypes
+     * @returns {number}
+     */
+    _getConditionFlags(conditionFlagsMap: Map<string, number>, conditionTypes: string[]): number {
+        let flags = 0;
+        for (const conditionType of conditionTypes) {
+            let flags2 = conditionFlagsMap.get(conditionType);
+            if (typeof flags2 === 'undefined') {
+                flags2 = 0;
+            }
+            flags |= flags2;
+        }
+        return flags;
+    }
+
+    /**
+     * @param {Trace} trace
+     * @param {TraceFrame} newFrame
+     * @returns {Trace}
+     */
+    _extendTrace(trace: Trace, newFrame: TraceFrame): Trace {
+        const newTrace: Trace = [newFrame];
+        for (const { transform, ruleIndex, text } of trace) {
+            newTrace.push({ transform, ruleIndex, text });
+        }
+        return newTrace;
+    }
+}
+
+/**
+ * @template {string} TCondition
+ * @param {string} inflectedSuffix
+ * @param {string} deinflectedSuffix
+ * @param {TCondition[]} conditionsIn
+ * @param {TCondition[]} conditionsOut
+ * @returns {import('language-transformer').SuffixRule<TCondition>}
+ */
+export function suffixInflection(inflectedSuffix, deinflectedSuffix, conditionsIn, conditionsOut) {
+    const suffixRegExp = new RegExp(inflectedSuffix + '$');
+    return {
+        type: 'suffix',
+        isInflected: suffixRegExp,
+        deinflected: deinflectedSuffix,
+        deinflect: (text) => text.slice(0, -inflectedSuffix.length) + deinflectedSuffix,
+        conditionsIn,
+        conditionsOut,
+    };
+}
+
+/**
+ * @template {string} TCondition
+ * @param {string} inflectedPrefix
+ * @param {string} deinflectedPrefix
+ * @param {TCondition[]} conditionsIn
+ * @param {TCondition[]} conditionsOut
+ * @returns {import('language-transformer').Rule<TCondition>}
+ */
+export function prefixInflection(inflectedPrefix, deinflectedPrefix, conditionsIn, conditionsOut) {
+    const prefixRegExp = new RegExp('^' + inflectedPrefix);
+    return {
+        type: 'prefix',
+        isInflected: prefixRegExp,
+        deinflect: (text) => deinflectedPrefix + text.slice(inflectedPrefix.length),
+        conditionsIn,
+        conditionsOut,
+    };
+}
+
+/**
+ * @template {string} TCondition
+ * @param {string} inflectedWord
+ * @param {string} deinflectedWord
+ * @param {TCondition[]} conditionsIn
+ * @param {TCondition[]} conditionsOut
+ * @returns {import('language-transformer').Rule<TCondition>}
+ */
+export function wholeWordInflection(inflectedWord, deinflectedWord, conditionsIn, conditionsOut) {
+    const regex = new RegExp('^' + inflectedWord + '$');
+    return {
+        type: 'wholeWord',
+        isInflected: regex,
+        deinflect: () => deinflectedWord,
+        conditionsIn,
+        conditionsOut,
+    };
+}
 
 const shimauEnglishDescription = '1. Shows a sense of regret/surprise when you did have volition in doing something, but it turned out to be bad to do.\n' +
-'2. Shows perfective/punctual achievement. This shows that an action has been completed.\n' +
-'3. Shows unintentional action–“accidentally”.\n';
+    '2. Shows perfective/punctual achievement. This shows that an action has been completed.\n' +
+    '3. Shows unintentional action–“accidentally”.\n';
 
 const passiveEnglishDescription = '1. Indicates an action received from an action performer.\n' +
-'2. Expresses respect for the subject of action performer.\n';
+    '2. Expresses respect for the subject of action performer.\n';
 
 const ikuVerbs = ['いく', '行く', '逝く', '往く'];
 const godanUSpecialVerbs = ['こう', 'とう', '請う', '乞う', '恋う', '問う', '訪う', '宣う', '曰う', '給う', '賜う', '揺蕩う'];
@@ -40,7 +395,8 @@ const fuVerbTeConjugations = [
  * @returns {import('language-transformer').SuffixRule<Condition>[]}
  */
 function irregularVerbSuffixInflections(suffix, conditionsIn, conditionsOut) {
-    const inflections = [];
+    /** @type {import('language-transformer').SuffixRule<Condition>[]} */
+    const inflections: any[] = [];
     for (const verb of ikuVerbs) {
         inflections.push(suffixInflection(`${verb[0]}っ${suffix}`, verb, conditionsIn, conditionsOut));
     }
@@ -234,8 +590,8 @@ export const japaneseTransforms = {
         '-ば': {
             name: '-ば',
             description: '1. Conditional form; shows that the previous stated condition\'s establishment is the condition for the latter stated condition to occur.\n' +
-            '2. Shows a trigger for a latter stated perception or judgment.\n' +
-            'Usage: Attach ば to the hypothetical form (仮定形) of verbs and i-adjectives.',
+                '2. Shows a trigger for a latter stated perception or judgment.\n' +
+                'Usage: Attach ば to the hypothetical form (仮定形) of verbs and i-adjectives.',
             i18n: [
                 {
                     language: 'ja',
@@ -283,11 +639,11 @@ export const japaneseTransforms = {
         '-ちゃ': {
             name: '-ちゃ',
             description: 'Contraction of ～ては.\n' +
-            '1. Explains how something always happens under the condition that it marks.\n' +
-            '2. Expresses the repetition (of a series of) actions.\n' +
-            '3. Indicates a hypothetical situation in which the speaker gives a (negative) evaluation about the other party\'s intentions.\n' +
-            '4. Used in "Must Not" patterns like ～てはいけない.\n' +
-            'Usage: Attach は after the て-form of verbs, contract ては into ちゃ.',
+                '1. Explains how something always happens under the condition that it marks.\n' +
+                '2. Expresses the repetition (of a series of) actions.\n' +
+                '3. Indicates a hypothetical situation in which the speaker gives a (negative) evaluation about the other party\'s intentions.\n' +
+                '4. Used in "Must Not" patterns like ～てはいけない.\n' +
+                'Usage: Attach は after the て-form of verbs, contract ては into ちゃ.',
             i18n: [
                 {
                     language: 'ja',
@@ -318,7 +674,7 @@ export const japaneseTransforms = {
         '-ちゃう': {
             name: '-ちゃう',
             description: 'Contraction of -しまう.\n' + shimauEnglishDescription +
-            'Usage: Attach しまう after the て-form of verbs, contract てしまう into ちゃう.',
+                'Usage: Attach しまう after the て-form of verbs, contract てしまう into ちゃう.',
             i18n: [
                 {
                     language: 'ja',
@@ -349,7 +705,7 @@ export const japaneseTransforms = {
         '-ちまう': {
             name: '-ちまう',
             description: 'Contraction of -しまう.\n' + shimauEnglishDescription +
-            'Usage: Attach しまう after the て-form of verbs, contract てしまう into ちまう.',
+                'Usage: Attach しまう after the て-form of verbs, contract てしまう into ちまう.',
             i18n: [
                 {
                     language: 'ja',
@@ -380,7 +736,7 @@ export const japaneseTransforms = {
         '-しまう': {
             name: '-しまう',
             description: shimauEnglishDescription +
-            'Usage: Attach しまう after the て-form of verbs.',
+                'Usage: Attach しまう after the て-form of verbs.',
             i18n: [
                 {
                     language: 'ja',
@@ -396,7 +752,7 @@ export const japaneseTransforms = {
         '-なさい': {
             name: '-なさい',
             description: 'Polite imperative suffix.\n' +
-            'Usage: Attach なさい after the continuative form (連用形) of verbs.',
+                'Usage: Attach なさい after the continuative form (連用形) of verbs.',
             i18n: [
                 {
                     language: 'ja',
@@ -426,7 +782,7 @@ export const japaneseTransforms = {
         '-そう': {
             name: '-そう',
             description: 'Appearing that; looking like.\n' +
-            'Usage: Attach そう to the continuative form (連用形) of verbs, or to the stem of adjectives.',
+                'Usage: Attach そう to the continuative form (連用形) of verbs, or to the stem of adjectives.',
             i18n: [
                 {
                     language: 'ja',
@@ -457,7 +813,7 @@ export const japaneseTransforms = {
         '-すぎる': {
             name: '-すぎる',
             description: 'Shows something "is too..." or someone is doing something "too much".\n' +
-            'Usage: Attach すぎる to the continuative form (連用形) of verbs, or to the stem of adjectives.',
+                'Usage: Attach すぎる to the continuative form (連用形) of verbs, or to the stem of adjectives.',
             i18n: [
                 {
                     language: 'ja',
@@ -488,7 +844,7 @@ export const japaneseTransforms = {
         '-過ぎる': {
             name: '-過ぎる',
             description: 'Shows something "is too..." or someone is doing something "too much".\n' +
-            'Usage: Attach 過ぎる to the continuative form (連用形) of verbs, or to the stem of adjectives.',
+                'Usage: Attach 過ぎる to the continuative form (連用形) of verbs, or to the stem of adjectives.',
             i18n: [
                 {
                     language: 'ja',
@@ -519,8 +875,8 @@ export const japaneseTransforms = {
         '-たい': {
             name: '-たい',
             description: '1. Expresses the feeling of desire or hope.\n' +
-            '2. Used in ...たいと思います, an indirect way of saying what the speaker intends to do.\n' +
-            'Usage: Attach たい to the continuative form (連用形) of verbs. たい itself conjugates as i-adjective.',
+                '2. Used in ...たいと思います, an indirect way of saying what the speaker intends to do.\n' +
+                'Usage: Attach たい to the continuative form (連用形) of verbs. たい itself conjugates as i-adjective.',
             i18n: [
                 {
                     language: 'ja',
@@ -550,8 +906,8 @@ export const japaneseTransforms = {
         '-たら': {
             name: '-たら',
             description: '1. Denotes the latter stated event is a continuation of the previous stated event.\n' +
-            '2. Assumes that a matter has been completed or concluded.\n' +
-            'Usage: Attach たら to the continuative form (連用形) of verbs after euphonic change form, かったら to the stem of i-adjectives.',
+                '2. Assumes that a matter has been completed or concluded.\n' +
+                'Usage: Attach たら to the continuative form (連用形) of verbs after euphonic change form, かったら to the stem of i-adjectives.',
             i18n: [
                 {
                     language: 'ja',
@@ -584,8 +940,8 @@ export const japaneseTransforms = {
         '-たり': {
             name: '-たり',
             description: '1. Shows two actions occurring back and forth (when used with two verbs).\n' +
-            '2. Shows examples of actions and states (when used with multiple verbs and adjectives).\n' +
-            'Usage: Attach たり to the continuative form (連用形) of verbs after euphonic change form, かったり to the stem of i-adjectives',
+                '2. Shows examples of actions and states (when used with multiple verbs and adjectives).\n' +
+                'Usage: Attach たり to the continuative form (連用形) of verbs after euphonic change form, かったり to the stem of i-adjectives',
             i18n: [
                 {
                     language: 'ja',
@@ -617,8 +973,8 @@ export const japaneseTransforms = {
         '-て': {
             name: '-て',
             description: 'て-form.\n' +
-            'It has a myriad of meanings. Primarily, it is a conjunctive particle that connects two clauses together.\n' +
-            'Usage: Attach て to the continuative form (連用形) of verbs after euphonic change form, くて to the stem of i-adjectives.',
+                'It has a myriad of meanings. Primarily, it is a conjunctive particle that connects two clauses together.\n' +
+                'Usage: Attach て to the continuative form (連用形) of verbs after euphonic change form, くて to the stem of i-adjectives.',
             i18n: [
                 {
                     language: 'ja',
@@ -650,8 +1006,8 @@ export const japaneseTransforms = {
         '-ず': {
             name: '-ず',
             description: '1. Negative form of verbs.\n' +
-            '2. Continuative form (連用形) of the particle ぬ (nu).\n' +
-            'Usage: Attach ず to the irrealis form (未然形) of verbs.',
+                '2. Continuative form (連用形) of the particle ぬ (nu).\n' +
+                'Usage: Attach ず to the irrealis form (未然形) of verbs.',
             i18n: [
                 {
                     language: 'ja',
@@ -681,8 +1037,8 @@ export const japaneseTransforms = {
         '-ぬ': {
             name: '-ぬ',
             description: 'Negative form of verbs.\n' +
-            'Usage: Attach ぬ to the irrealis form (未然形) of verbs.\n' +
-            'する becomes せぬ',
+                'Usage: Attach ぬ to the irrealis form (未然形) of verbs.\n' +
+                'する becomes せぬ',
             i18n: [
                 {
                     language: 'ja',
@@ -712,8 +1068,8 @@ export const japaneseTransforms = {
         '-ん': {
             name: '-ん',
             description: 'Negative form of verbs; a sound change of ぬ.\n' +
-            'Usage: Attach ん to the irrealis form (未然形) of verbs.\n' +
-            'する becomes せん',
+                'Usage: Attach ん to the irrealis form (未然形) of verbs.\n' +
+                'する becomes せん',
             i18n: [
                 {
                     language: 'ja',
@@ -743,8 +1099,8 @@ export const japaneseTransforms = {
         '-んばかり': {
             name: '-んばかり',
             description: 'Shows an action or condition is on the verge of occurring, or an excessive/extreme degree.\n' +
-            'Usage: Attach んばかり to the irrealis form (未然形) of verbs.\n' +
-            'する becomes せんばかり',
+                'Usage: Attach んばかり to the irrealis form (未然形) of verbs.\n' +
+                'する becomes せんばかり',
             i18n: [
                 {
                     language: 'ja',
@@ -774,9 +1130,9 @@ export const japaneseTransforms = {
         '-んとする': {
             name: '-んとする',
             description: '1. Shows the speaker\'s will or intention.\n' +
-            '2. Shows an action or condition is on the verge of occurring.\n' +
-            'Usage: Attach んとする to the irrealis form (未然形) of verbs.\n' +
-            'する becomes せんとする',
+                '2. Shows an action or condition is on the verge of occurring.\n' +
+                'Usage: Attach んとする to the irrealis form (未然形) of verbs.\n' +
+                'する becomes せんとする',
             i18n: [
                 {
                     language: 'ja',
@@ -806,10 +1162,10 @@ export const japaneseTransforms = {
         '-む': {
             name: '-む',
             description: 'Archaic.\n' +
-            '1. Shows an inference of a certain matter.\n' +
-            '2. Shows speaker\'s intention.\n' +
-            'Usage: Attach む to the irrealis form (未然形) of verbs.\n' +
-            'する becomes せむ',
+                '1. Shows an inference of a certain matter.\n' +
+                '2. Shows speaker\'s intention.\n' +
+                'Usage: Attach む to the irrealis form (未然形) of verbs.\n' +
+                'する becomes せむ',
             i18n: [
                 {
                     language: 'ja',
@@ -839,8 +1195,8 @@ export const japaneseTransforms = {
         '-ざる': {
             name: '-ざる',
             description: 'Negative form of verbs.\n' +
-            'Usage: Attach ざる to the irrealis form (未然形) of verbs.\n' +
-            'する becomes せざる',
+                'Usage: Attach ざる to the irrealis form (未然形) of verbs.\n' +
+                'する becomes せざる',
             i18n: [
                 {
                     language: 'ja',
@@ -870,9 +1226,9 @@ export const japaneseTransforms = {
         '-ねば': {
             name: '-ねば',
             description: '1. Shows a hypothetical negation; if not ...\n' +
-            '2. Shows a must. Used with or without ならぬ.\n' +
-            'Usage: Attach ねば to the irrealis form (未然形) of verbs.\n' +
-            'する becomes せねば',
+                '2. Shows a must. Used with or without ならぬ.\n' +
+                'Usage: Attach ねば to the irrealis form (未然形) of verbs.\n' +
+                'する becomes せねば',
             i18n: [
                 {
                     language: 'ja',
@@ -916,9 +1272,9 @@ export const japaneseTransforms = {
         'causative': {
             name: 'causative',
             description: 'Describes the intention to make someone do something.\n' +
-            'Usage: Attach させる to the irrealis form (未然形) of ichidan verbs and くる.\n' +
-            'Attach せる to the irrealis form (未然形) of godan verbs and する.\n' +
-            'It itself conjugates as an ichidan verb.',
+                'Usage: Attach させる to the irrealis form (未然形) of ichidan verbs and くる.\n' +
+                'Attach せる to the irrealis form (未然形) of godan verbs and する.\n' +
+                'It itself conjugates as an ichidan verb.',
             i18n: [
                 {
                     language: 'ja',
@@ -951,11 +1307,11 @@ export const japaneseTransforms = {
         'short causative': {
             name: 'short causative',
             description: 'Contraction of the causative form.\n' +
-            'Describes the intention to make someone do something.\n' +
-            'Usage: Attach す to the irrealis form (未然形) of godan verbs.\n' +
-            'Attach さす to the dictionary form (終止形) of ichidan verbs.\n' +
-            'する becomes さす, くる becomes こさす.\n' +
-            'It itself conjugates as an godan verb.',
+                'Describes the intention to make someone do something.\n' +
+                'Usage: Attach す to the irrealis form (未然形) of godan verbs.\n' +
+                'Attach さす to the dictionary form (終止形) of ichidan verbs.\n' +
+                'する becomes さす, くる becomes こさす.\n' +
+                'It itself conjugates as an godan verb.',
             i18n: [
                 {
                     language: 'ja',
@@ -986,8 +1342,8 @@ export const japaneseTransforms = {
         'imperative': {
             name: 'imperative',
             description: '1. To give orders.\n' +
-            '2. (As あれ) Represents the fact that it will never change no matter the circumstances.\n' +
-            '3. Express a feeling of hope.',
+                '2. (As あれ) Represents the fact that it will never change no matter the circumstances.\n' +
+                '3. Express a feeling of hope.',
             i18n: [
                 {
                     language: 'ja',
@@ -1021,7 +1377,7 @@ export const japaneseTransforms = {
         'continuative': {
             name: 'continuative',
             description: 'Used to indicate actions that are (being) carried out.\n' +
-            'Refers to 連用形, the part of the verb after conjugating with -ます and dropping ます.',
+                'Refers to 連用形, the part of the verb after conjugating with -ます and dropping ます.',
             i18n: [
                 {
                     language: 'ja',
@@ -1070,8 +1426,8 @@ export const japaneseTransforms = {
         'negative': {
             name: 'negative',
             description: '1. Negative form of verbs.\n' +
-            '2. Expresses a feeling of solicitation to the other party.\n' +
-            'Usage: Attach ない to the irrealis form (未然形) of verbs, くない to the stem of i-adjectives. ない itself conjugates as i-adjective. ます becomes ません.',
+                '2. Expresses a feeling of solicitation to the other party.\n' +
+                'Usage: Attach ない to the irrealis form (未然形) of verbs, くない to the stem of i-adjectives. ない itself conjugates as i-adjective. ます becomes ません.',
             i18n: [
                 {
                     language: 'ja',
@@ -1103,7 +1459,7 @@ export const japaneseTransforms = {
         '-さ': {
             name: '-さ',
             description: 'Nominalizing suffix of i-adjectives indicating nature, state, mind or degree.\n' +
-            'Usage: Attach さ to the stem of i-adjectives.',
+                'Usage: Attach さ to the stem of i-adjectives.',
             i18n: [
                 {
                     language: 'ja',
@@ -1118,7 +1474,7 @@ export const japaneseTransforms = {
         'passive': {
             name: 'passive',
             description: passiveEnglishDescription +
-            'Usage: Attach れる to the irrealis form (未然形) of godan verbs.',
+                'Usage: Attach れる to the irrealis form (未然形) of godan verbs.',
             i18n: [
                 {
                     language: 'ja',
@@ -1147,12 +1503,12 @@ export const japaneseTransforms = {
         '-た': {
             name: '-た',
             description: '1. Indicates a reality that has happened in the past.\n' +
-            '2. Indicates the completion of an action.\n' +
-            '3. Indicates the confirmation of a matter.\n' +
-            '4. Indicates the speaker\'s confidence that the action will definitely be fulfilled.\n' +
-            '5. Indicates the events that occur before the main clause are represented as relative past.\n' +
-            '6. Indicates a mild imperative/command.\n' +
-            'Usage: Attach た to the continuative form (連用形) of verbs after euphonic change form, かった to the stem of i-adjectives.',
+                '2. Indicates the completion of an action.\n' +
+                '3. Indicates the confirmation of a matter.\n' +
+                '4. Indicates the speaker\'s confidence that the action will definitely be fulfilled.\n' +
+                '5. Indicates the events that occur before the main clause are represented as relative past.\n' +
+                '6. Indicates a mild imperative/command.\n' +
+                'Usage: Attach た to the continuative form (連用形) of verbs after euphonic change form, かった to the stem of i-adjectives.',
             i18n: [
                 {
                     language: 'ja',
@@ -1186,7 +1542,7 @@ export const japaneseTransforms = {
         '-ます': {
             name: '-ます',
             description: 'Polite conjugation of verbs and adjectives.\n' +
-            'Usage: Attach ます to the continuative form (連用形) of verbs.',
+                'Usage: Attach ます to the continuative form (連用形) of verbs.',
             i18n: [
                 {
                     language: 'ja',
@@ -1216,9 +1572,9 @@ export const japaneseTransforms = {
         'potential': {
             name: 'potential',
             description: 'Indicates a state of being (naturally) capable of doing an action.\n' +
-            'Usage: Attach (ら)れる to the irrealis form (未然形) of ichidan verbs.\n' +
-            'Attach る to the imperative form (命令形) of godan verbs.\n' +
-            'する becomes できる, くる becomes こ(ら)れる',
+                'Usage: Attach (ら)れる to the irrealis form (未然形) of ichidan verbs.\n' +
+                'Attach る to the imperative form (命令形) of godan verbs.\n' +
+                'する becomes できる, くる becomes こ(ら)れる',
             i18n: [
                 {
                     language: 'ja',
@@ -1245,9 +1601,9 @@ export const japaneseTransforms = {
         'potential or passive': {
             name: 'potential or passive',
             description: passiveEnglishDescription +
-            '3. Indicates a state of being (naturally) capable of doing an action.\n' +
-            'Usage: Attach られる to the irrealis form (未然形) of ichidan verbs.\n' +
-            'する becomes せられる, くる becomes こられる',
+                '3. Indicates a state of being (naturally) capable of doing an action.\n' +
+                'Usage: Attach られる to the irrealis form (未然形) of ichidan verbs.\n' +
+                'する becomes せられる, くる becomes こられる',
             i18n: [
                 {
                     language: 'ja',
@@ -1268,12 +1624,12 @@ export const japaneseTransforms = {
         'volitional': {
             name: 'volitional',
             description: '1. Expresses speaker\'s will or intention.\n' +
-            '2. Expresses an invitation to the other party.\n' +
-            '3. (Used in …ようとする) Indicates being on the verge of initiating an action or transforming a state.\n' +
-            '4. Indicates an inference of a matter.\n' +
-            'Usage: Attach よう to the irrealis form (未然形) of ichidan verbs.\n' +
-            'Attach う to the irrealis form (未然形) of godan verbs after -o euphonic change form.\n' +
-            'Attach かろう to the stem of i-adjectives (4th meaning only).',
+                '2. Expresses an invitation to the other party.\n' +
+                '3. (Used in …ようとする) Indicates being on the verge of initiating an action or transforming a state.\n' +
+                '4. Indicates an inference of a matter.\n' +
+                'Usage: Attach よう to the irrealis form (未然形) of ichidan verbs.\n' +
+                'Attach う to the irrealis form (未然形) of godan verbs after -o euphonic change form.\n' +
+                'Attach かろう to the stem of i-adjectives (4th meaning only).',
             i18n: [
                 {
                     language: 'ja',
@@ -1305,10 +1661,10 @@ export const japaneseTransforms = {
         'volitional slang': {
             name: 'volitional slang',
             description: 'Contraction of volitional form + か\n' +
-            '1. Expresses speaker\'s will or intention.\n' +
-            '2. Expresses an invitation to the other party.\n' +
-            'Usage: Replace final う with っ of volitional form then add か.\n' +
-            'For example: 行こうか -> 行こっか.',
+                '1. Expresses speaker\'s will or intention.\n' +
+                '2. Expresses an invitation to the other party.\n' +
+                'Usage: Replace final う with っ of volitional form then add か.\n' +
+                'For example: 行こうか -> 行こっか.',
             i18n: [
                 {
                     language: 'ja',
@@ -1339,17 +1695,17 @@ export const japaneseTransforms = {
         '-まい': {
             name: '-まい',
             description: 'Negative volitional form of verbs.\n' +
-            '1. Expresses speaker\'s assumption that something is likely not true.\n' +
-            '2. Expresses speaker\'s will or intention not to do something.\n' +
-            'Usage: Attach まい to the dictionary form (終止形) of verbs.\n' +
-            'Attach まい to the irrealis form (未然形) of ichidan verbs.\n' +
-            'する becomes しまい, くる becomes こまい',
+                '1. Expresses speaker\'s assumption that something is likely not true.\n' +
+                '2. Expresses speaker\'s will or intention not to do something.\n' +
+                'Usage: Attach まい to the dictionary form (終止形) of verbs.\n' +
+                'Attach まい to the irrealis form (未然形) of ichidan verbs.\n' +
+                'する becomes しまい, くる becomes こまい',
             i18n: [
                 {
                     language: 'ja',
                     name: '～まい',
                     description: '1. 打うち消けしの推量すいりょう 「～ないだろう」と想像する\n' +
-                    '2. 打うち消けしの意志いし「～ないつもりだ」という気持ち',
+                        '2. 打うち消けしの意志いし「～ないつもりだ」という気持ち',
                 },
             ],
             rules: [
@@ -1367,9 +1723,9 @@ export const japaneseTransforms = {
         '-おく': {
             name: '-おく',
             description: 'To do certain things in advance in preparation (or in anticipation) of latter needs.\n' +
-            'Usage: Attach おく to the て-form of verbs.\n' +
-            'Attach でおく after ない negative form of verbs.\n' +
-            'Contracts to とく・どく in speech.',
+                'Usage: Attach おく to the て-form of verbs.\n' +
+                'Attach でおく after ない negative form of verbs.\n' +
+                'Contracts to とく・どく in speech.',
             i18n: [
                 {
                     language: 'ja',
@@ -1388,11 +1744,11 @@ export const japaneseTransforms = {
         '-いる': {
             name: '-いる',
             description: '1. Indicates an action continues or progresses to a point in time.\n' +
-            '2. Indicates an action is completed and remains as is.\n' +
-            '3. Indicates a state or condition that can be taken to be the result of undergoing some change.\n' +
-            'Usage: Attach いる to the て-form of verbs. い can be dropped in speech.\n' +
-            'Attach でいる after ない negative form of verbs.\n' +
-            '(Slang) Attach おる to the て-form of verbs. Contracts to とる・でる in speech.',
+                '2. Indicates an action is completed and remains as is.\n' +
+                '3. Indicates a state or condition that can be taken to be the result of undergoing some change.\n' +
+                'Usage: Attach いる to the て-form of verbs. い can be dropped in speech.\n' +
+                'Attach でいる after ない negative form of verbs.\n' +
+                '(Slang) Attach おる to the て-form of verbs. Contracts to とる・でる in speech.',
             i18n: [
                 {
                     language: 'ja',
@@ -1427,7 +1783,7 @@ export const japaneseTransforms = {
         '-げ': {
             name: '-げ',
             description: 'Describes a person\'s appearance. Shows feelings of the person.\n' +
-            'Usage: Attach げ or 気 to the stem of i-adjectives',
+                'Usage: Attach げ or 気 to the stem of i-adjectives',
             i18n: [
                 {
                     language: 'ja',
@@ -1443,8 +1799,8 @@ export const japaneseTransforms = {
         '-がる': {
             name: '-がる',
             description: '1. Shows subject’s feelings contrast with what is thought/known about them.\n' +
-            '2. Indicates subject\'s behavior (stands out).\n' +
-            'Usage: Attach がる to the stem of i-adjectives. It itself conjugates as a godan verb.',
+                '2. Indicates subject\'s behavior (stands out).\n' +
+                'Usage: Attach がる to the stem of i-adjectives. It itself conjugates as a godan verb.',
             i18n: [
                 {
                     language: 'ja',
@@ -1459,9 +1815,9 @@ export const japaneseTransforms = {
         '-え': {
             name: '-え',
             description: 'Slang. A sound change of i-adjectives.\n' +
-            'ai：やばい → やべぇ\n' +
-            'ui：さむい → さみぃ/さめぇ\n' +
-            'oi：すごい → すげぇ',
+                'ai：やばい → やべぇ\n' +
+                'ui：さむい → さみぃ/さめぇ\n' +
+                'oi：すごい → すげぇ',
             i18n: [
                 {
                     language: 'ja',

@@ -16,6 +16,11 @@ export interface TextCandidate {
     length: number;
 }
 
+export interface TextCandidatesResult {
+    candidates: TextCandidate[];
+    rect: DOMRect;
+}
+
 /**
  * Normalizes the offset to the start of the character the cursor is actually over
  * This fixes issues where cursor position within a character causes inconsistent offsets
@@ -254,8 +259,10 @@ function isJapanesePunctuation(code: number): boolean {
  *
  * Like Yomitan's approach: extract text candidates without trying to detect
  * word boundaries. The dictionary will determine the actual word.
+ * 
+ * Also returns the bounding rect to avoid redundant DOM lookups.
  */
-export function getTextCandidates(x: number, y: number, maxLength: number = 20): TextCandidate[] | null {
+export function getTextCandidates(x: number, y: number, maxLength: number = 20): TextCandidatesResult | null {
     const range = document.caretRangeFromPoint?.(x, y);
     if (!range) return null;
 
@@ -310,49 +317,18 @@ export function getTextCandidates(x: number, y: number, maxLength: number = 20):
         candidates.push({ text, length: len });
     }
 
-    return candidates.length > 0 ? candidates : null;
-}
+    if (candidates.length === 0) return null;
 
-/**
- * Expands a selection to include more context for better scanning
- */
-export function getExpandedTextAtPoint(x: number, y: number): TextRange | null {
-    const range = document.caretRangeFromPoint?.(x, y);
-    if (!range) return null;
-
-    const startNode = range.startContainer;
-    if (startNode.nodeType !== Node.TEXT_NODE) return null;
-
-    const textNode = startNode as Text;
-
-    // Get the entire text node content for better context
-    const text = textNode.textContent || "";
-    const offset = range.startOffset;
-
-    // For Japanese text, we want to get a larger window
-    let windowSize = 200;
-
-    // Check if this looks like Japanese text
-    const hasJapanese = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(text);
-    if (hasJapanese) {
-        windowSize = 400; // Larger window for Japanese
-    }
-
-    const start = Math.max(0, offset - windowSize / 2);
-    const end = Math.min(text.length, offset + windowSize / 2);
-
-    const extractedText = text.substring(start, end).trim();
-
-    if (extractedText.length === 0) return null;
-
-    // Get bounding rect for the text
+    // Create a range for the longest candidate to get its position
+    const longestCandidate = candidates[candidates.length - 1];
+    const end = Math.min(start + longestCandidate.length, textContent.length);
     const textRange = document.createRange();
     textRange.setStart(textNode, start);
-    textRange.setEnd(textNode, Math.min(end, textNode.length));
-
+    textRange.setEnd(textNode, end);
     const rect = textRange.getBoundingClientRect();
     textRange.detach();
 
-    return { text: extractedText, rect };
+    return { candidates, rect };
 }
+
 
