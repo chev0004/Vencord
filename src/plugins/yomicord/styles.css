@@ -27,11 +27,6 @@
     }
 }
 
-/* Make all content inside tooltip selectable */
-.yomicord-tooltip * {
-    user-select: text;
-}
-
 /* Hide scrollbar for tabs container */
 .yomicord-tooltip [data-tabs-container]::-webkit-scrollbar {
     display: none;
