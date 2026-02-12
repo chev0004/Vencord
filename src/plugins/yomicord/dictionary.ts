@@ -13,6 +13,8 @@ import { LanguageTransformer, japaneseTransforms } from "./logic";
 
 const DICTIONARY_KEY = "Yomicord_Dictionaries";
 const DICTIONARY_INDEX_KEY = "Yomicord_Dictionary_Index";
+const DICTIONARY_ORDER_KEY = "Yomicord_Dictionary_Order";
+const DICTIONARY_PRIORITIES_KEY = "Yomicord_Dictionary_Priorities";
 
 // Singleton transformer instance for deinflection
 let transformer: LanguageTransformer | null = null;
@@ -76,6 +78,39 @@ export async function getDictionaryIndex(): Promise<DictionaryIndex> {
     return index || {};
 }
 
+export async function getDictionaryPriorities(): Promise<Record<string, number>> {
+    const stored = await DataStore.get<Record<string, number>>(DICTIONARY_PRIORITIES_KEY);
+    if (stored && Object.keys(stored).length > 0) return stored;
+    const legacy = await DataStore.get<string[]>(DICTIONARY_ORDER_KEY);
+    if (legacy && legacy.length > 0) {
+        const migrated: Record<string, number> = {};
+        for (let i = 0; i < legacy.length; i++) migrated[legacy[i]] = i;
+        return migrated;
+    }
+    return {};
+}
+
+export async function setDictionaryPriorities(priorities: Record<string, number>): Promise<void> {
+    await DataStore.set(DICTIONARY_PRIORITIES_KEY, priorities);
+}
+
+export async function updateDictionaryPriority(name: string, priority: number): Promise<void> {
+    const priorities = await getDictionaryPriorities();
+    priorities[name] = priority;
+    await setDictionaryPriorities(priorities);
+}
+
+export function sortDictionariesByPriority(dictNames: string[], priorities: Record<string, number>): string[] {
+    const keys = Object.keys(priorities);
+    if (keys.length === 0) return dictNames;
+    const defaultValue = Math.max(0, ...Object.values(priorities)) + 1;
+    return [...dictNames].sort((a, b) => {
+        const pa = priorities[a] ?? defaultValue;
+        const pb = priorities[b] ?? defaultValue;
+        return pa - pb;
+    });
+}
+
 // Cache for recent search results to avoid redundant lookups
 const searchCache = new Map<string, { results: DictionaryEntry[], timestamp: number; }>();
 const CACHE_TTL = 5000; // 5 seconds cache
@@ -134,9 +169,7 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
         }
     };
 
-    // Yomitan-style lookup: Try progressively shorter substrings, deinflect each, prioritize by originalTextLength
-    // This matches Yomitan's exact behavior: _getAlgorithmDeinflections tries progressively shorter strings
-    const dictNames = Object.keys(index);
+    const dictNames = await getInstalledDictionaries();
 
     // Track results with their originalTextLength to prioritize longer matches
     type ResultWithLength = {
@@ -735,7 +768,6 @@ export async function importDictionaryJSON(file: File, dictionaryName: string, o
         }
 
         onProgress?.(20, 100, "Updating dictionary index...");
-        // Add to dictionary index if not exists
         const index = await getDictionaryIndex();
         if (!index[dictionaryName]) {
             index[dictionaryName] = {
@@ -744,6 +776,10 @@ export async function importDictionaryJSON(file: File, dictionaryName: string, o
                 sequenced: false
             };
             await DataStore.set(DICTIONARY_INDEX_KEY, index);
+            const priorities = await getDictionaryPriorities();
+            const maxP = Object.values(priorities).length > 0 ? Math.max(...Object.values(priorities)) : -1;
+            priorities[dictionaryName] = maxP + 1;
+            await setDictionaryPriorities(priorities);
         }
 
         // Process and store the term bank
@@ -908,13 +944,16 @@ async function processTermBank(dictionaryName: string, termBank: any[], onProgre
  * Deletes a dictionary
  */
 export async function deleteDictionary(dictionaryName: string): Promise<void> {
-    // Remove from index
     const index = await getDictionaryIndex();
     delete index[dictionaryName];
     await DataStore.set(DICTIONARY_INDEX_KEY, index);
 
-    // Delete all stored data for this dictionary
-    // Keys are in format: Yomicord_Dictionaries_${dictionaryName}_${firstChar}
+    const priorities = await getDictionaryPriorities();
+    if (Object.keys(priorities).length > 0) {
+        delete priorities[dictionaryName];
+        await setDictionaryPriorities(priorities);
+    }
+
     const prefix = `${DICTIONARY_KEY}_${dictionaryName}_`;
     const allKeys = await DataStore.keys<string>();
     const keysToDelete = allKeys.filter(key => key.startsWith(prefix));
@@ -925,11 +964,13 @@ export async function deleteDictionary(dictionaryName: string): Promise<void> {
 }
 
 /**
- * Gets list of installed dictionaries
+ * Gets list of installed dictionaries in priority order (lower number = first)
  */
 export async function getInstalledDictionaries(): Promise<string[]> {
     const index = await getDictionaryIndex();
-    return Object.keys(index);
+    const names = Object.keys(index);
+    const priorities = await getDictionaryPriorities();
+    return sortDictionariesByPriority(names, priorities);
 }
 
 /**
