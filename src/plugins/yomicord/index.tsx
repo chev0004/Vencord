@@ -14,7 +14,7 @@ import { findByCodeLazy } from "@webpack";
 import { React, createRoot, scrollerClasses } from "@webpack/common";
 
 import { DictionarySettings } from "./DictionarySettings";
-import { lookupTerm } from "./dictionary";
+import { getDictionaryPriorities, lookupTerm, sortDictionariesByPriority } from "./dictionary";
 import { getTextCandidates } from "./textScanner";
 import { normalizeDefinition } from "./utils";
 
@@ -699,7 +699,9 @@ async function handleMouseMoveDebounced(e: MouseEvent) {
             entriesByDict.get(dictName)!.push(entry);
         }
 
-        const dictionaries = Array.from(entriesByDict.keys());
+        let dictionaries = Array.from(entriesByDict.keys());
+        const priorities = await getDictionaryPriorities();
+        dictionaries = sortDictionariesByPriority(dictionaries, priorities);
         const matchedTerm = entries[0].term;
 
         // Tooltip already exists from loading state
