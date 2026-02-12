@@ -228,11 +228,6 @@ export function normalizeDefinition(def: any): string | HTMLElement {
         if (def.value !== undefined) {
             return String(def.value);
         }
-        // If we have any recognizable properties, try to extract text
-        if (def.text !== undefined) {
-            return String(def.text);
-        }
-        // Last resort: try to extract text from structured content
         const extracted = extractTextFromStructuredContent(def);
         if (extracted) {
             return extracted;
