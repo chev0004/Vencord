@@ -10,8 +10,8 @@ import { definePluginSettings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import { Logger } from "@utils/Logger";
 import definePlugin, { OptionType } from "@utils/types";
-import { findByCodeLazy, findByPropsLazy } from "@webpack";
-import { React, createRoot } from "@webpack/common";
+import { findByCodeLazy } from "@webpack";
+import { React, createRoot, scrollerClasses } from "@webpack/common";
 
 import { DictionarySettings } from "./DictionarySettings";
 import { lookupTerm } from "./dictionary";
@@ -19,8 +19,6 @@ import { getTextCandidates } from "./textScanner";
 import { normalizeDefinition } from "./utils";
 
 const logger = new Logger("Yomicord");
-
-const ScrollerClasses = findByPropsLazy("thin", "auto", "customTheme");
 const Spinner = findByCodeLazy("wanderingCubes");
 
 const settings = definePluginSettings({
@@ -170,10 +168,8 @@ function createTooltip(popupLevel: number = 0): { container: HTMLDivElement; hea
         overflow-y: auto;
         max-height: calc(70vh - 50px);
     `;
-    // Apply Discord's thin scrollbar styling
-    if (ScrollerClasses?.thin) {
-        tooltipContent.className = ScrollerClasses.thin;
-    }
+    const thin = scrollerClasses.thin;
+    if (thin) tooltipContent.className = thin;
     tooltip.appendChild(tooltipContent);
 
     document.body.appendChild(tooltip);
@@ -815,14 +811,15 @@ function createLoadingIndicator(): HTMLElement {
         transform: scale(0.7);
     `;
 
-    // Render the Spinner component using React
-    const spinnerElement = React.createElement(Spinner, { type: Spinner.Type.WANDERING_CUBES });
-    const root = createRoot(spinnerWrapper);
-    root.render(spinnerElement);
-
-    // Store root reference for cleanup (on container so cleanup code can find it)
-    (container as any)._reactRoot = root;
-
+    try {
+        const spinnerElement = React.createElement(Spinner, { type: Spinner.Type.WANDERING_CUBES });
+        const root = createRoot(spinnerWrapper);
+        root.render(spinnerElement);
+        (container as any)._reactRoot = root;
+    } catch {
+        logger.debug("Spinner component unavailable, using text fallback");
+        spinnerWrapper.textContent = "Loading...";
+    }
     container.appendChild(spinnerWrapper);
 
     return container;
