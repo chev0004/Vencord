@@ -6,18 +6,20 @@
 
 import { Button, Forms, Text, TextInput, Toasts, useEffect, useState } from "@webpack/common";
 
-import { cleanupOrphanedDictionaryKeys, deleteDictionary, findOrphanedDictionaryKeys, getInstalledDictionaries, importDictionaryJSON, importMultipleDictionaryFiles, type ProgressCallback } from "./dictionary";
+import { cleanupOrphanedDictionaryKeys, deleteDictionary, findOrphanedDictionaryKeys, getDictionaryPriorities, getInstalledDictionaries, importDictionaryJSON, importMultipleDictionaryFiles, updateDictionaryPriority, type ProgressCallback } from "./dictionary";
 
 export function DictionarySettings() {
     const [dictionaries, setDictionaries] = useState<string[]>([]);
+    const [priorities, setPriorities] = useState<Record<string, number>>({});
     const [dictionaryName, setDictionaryName] = useState("JMdict");
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState<{ current: number; total: number; stage: string; } | null>(null);
     const [cleaning, setCleaning] = useState(false);
 
     const loadDictionaries = async () => {
-        const dicts = await getInstalledDictionaries();
+        const [dicts, prio] = await Promise.all([getInstalledDictionaries(), getDictionaryPriorities()]);
         setDictionaries(dicts);
+        setPriorities(prio);
     };
 
     useEffect(() => {
@@ -91,6 +93,13 @@ export function DictionarySettings() {
             id: Toasts.genId(),
             type: Toasts.Type.SUCCESS
         });
+        await loadDictionaries();
+    };
+
+    const handlePriorityChange = async (name: string, value: string) => {
+        const n = parseInt(value, 10);
+        if (Number.isNaN(n) || n < 1) return;
+        await updateDictionaryPriority(name, n);
         await loadDictionaries();
     };
 
@@ -221,27 +230,46 @@ export function DictionarySettings() {
                     </Text>
                 ) : (
                     <div>
-                        {dictionaries.map(dict => (
+                        <Forms.FormText style={{ marginBottom: "8px", color: "var(--text-muted)" }}>
+                            Priority number (lower = first in popups).
+                        </Forms.FormText>
+                        {dictionaries.map((dict, idx) => (
                             <div
                                 key={dict}
                                 style={{
                                     display: "flex",
                                     justifyContent: "space-between",
                                     alignItems: "center",
-                                    padding: "8px 12px",
-                                    marginBottom: "8px",
+                                    padding: "4px 12px",
+                                    marginBottom: "4px",
                                     background: "var(--background-secondary)",
                                     borderRadius: "4px"
                                 }}
                             >
                                 <Text>{dict}</Text>
-                                <Button
-                                    color={Button.Colors.RED}
-                                    size={Button.Sizes.SMALL}
-                                    onClick={() => handleDelete(dict)}
-                                >
-                                    Delete
-                                </Button>
+                                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                                    <TextInput
+                                        type="number"
+                                        min={1}
+                                        value={String(priorities[dict] ?? idx + 1)}
+                                        onChange={v => {
+                                            const n = parseInt(v, 10);
+                                            setPriorities(prev => ({ ...prev, [dict]: Number.isNaN(n) || n < 1 ? 1 : n }));
+                                        }}
+                                        onBlur={e => handlePriorityChange(dict, (e.target as HTMLInputElement).value)}
+                                        onKeyDown={e => {
+                                            if (e.key === "Enter") handlePriorityChange(dict, (e.target as HTMLInputElement).value);
+                                        }}
+                                        style={{ width: "56px" }}
+                                    />
+                                    <Button
+                                        color={Button.Colors.RED}
+                                        size={Button.Sizes.SMALL}
+                                        onClick={() => handleDelete(dict)}
+                                    >
+                                        Delete
+                                    </Button>
+                                </div>
                             </div>
                         ))}
                     </div>
