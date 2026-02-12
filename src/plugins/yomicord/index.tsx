@@ -14,7 +14,7 @@ import { findByCodeLazy } from "@webpack";
 import { React, createRoot, scrollerClasses } from "@webpack/common";
 
 import { DictionarySettings } from "./DictionarySettings";
-import { getDictionaryPriorities, lookupTerm, sortDictionariesByPriority } from "./dictionary";
+import { cleanupOrphanedDictionaryKeys, getDictionaryPriorities, lookupTerm, sortDictionariesByPriority } from "./dictionary";
 import { getTextCandidates } from "./textScanner";
 import { normalizeDefinition } from "./utils";
 
@@ -963,6 +963,7 @@ export default definePlugin({
     start() {
         logger.info("Yomicord started");
         initialize();
+        void cleanupOrphanedDictionaryKeys();
     },
 
     stop() {
