@@ -43,9 +43,7 @@ function getDeinflectionCandidates(text: string): string[] {
                 candidates.push(result.text);
             }
         }
-    } catch (error) {
-        console.error('Deinflection error:', error);
-        // Fall back to just returning the original text
+    } catch {
     }
 
     return candidates;
@@ -79,7 +77,7 @@ export async function getDictionaryIndex(): Promise<DictionaryIndex> {
 }
 
 // Cache for recent search results to avoid redundant lookups
-const searchCache = new Map<string, { results: DictionaryEntry[], timestamp: number }>();
+const searchCache = new Map<string, { results: DictionaryEntry[], timestamp: number; }>();
 const CACHE_TTL = 5000; // 5 seconds cache
 const MAX_CACHE_SIZE = 100;
 
@@ -89,16 +87,12 @@ const MAX_CACHE_SIZE = 100;
  * For kanji terms, also finds all entries with the same term but different readings
  */
 export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
-    const startTime = performance.now();
     cacheHits = 0;
     cacheMisses = 0;
-    console.log(`[Dictionary] Scanned text: "${text}"`);
 
-    // Check cache first
     const cacheKey = text;
     const cached = searchCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-        console.log(`[Dictionary] Using cached results for "${text}"`);
         return cached.results;
     }
 
@@ -106,11 +100,8 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
     const seen = new Set<string>(); // Track entries we've already added: "term|reading"
     const kanjiTermsSearched = new Set<string>(); // Track kanji terms we've already searched for all readings
 
-    const indexStartTime = performance.now();
     const index = await getDictionaryIndex();
-    console.log(`[Dictionary] ⏱️  getDictionaryIndex took ${(performance.now() - indexStartTime).toFixed(2)}ms`);
 
-    // Check if text contains kanji
     const hasKanji = /[\u4E00-\u9FFF]/.test(text);
 
     // Helper function to search for all readings of a kanji term
@@ -159,26 +150,14 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
 
     // Pre-fetch all DataStore keys we'll need in parallel for the first character
     // This warms up the cache and reduces latency
-    const prefetchStartTime = performance.now();
     const firstChar = text[0];
     const prefetchPromises = dictNames.map(dictName => getDataStoreData(dictName, firstChar));
     await Promise.all(prefetchPromises);
-    const prefetchTime = performance.now() - prefetchStartTime;
-    if (prefetchTime > 10) {
-        console.log(`[Dictionary] ⏱️  Pre-fetched ${dictNames.length} dictionaries for first char "${firstChar}" in ${prefetchTime.toFixed(2)}ms`);
-    }
 
-    // Try progressively shorter substrings (like Yomitan's _getNextSubstring loop)
-    // Search all substrings to find matches at all lengths (like Yomitan does)
-    const substringLoopStartTime = performance.now();
     for (let originalTextLength = text.length; originalTextLength > 0; originalTextLength--) {
-        const substringStartTime = performance.now();
         const searchText = text.substring(0, originalTextLength);
         let foundAtThisLength = false;
 
-        console.log(`[Dictionary] Trying substring (length ${originalTextLength}): "${searchText}"`);
-
-        // YOMITAN BEHAVIOR: Convert katakana to hiragana BEFORE searching/deinflecting
         // This is what Yomitan does via text preprocessors (convertHiraganaToKatakana with inverse mode)
         const searchTextHiragana = convertKatakanaToHiragana(searchText);
         const searchVariants = searchText !== searchTextHiragana
@@ -187,25 +166,13 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
 
         // 1. Try exact match first (for both katakana and hiragana variants)
         // Use 'exact' matching since we know the exact term we're searching for
-        const exactSearchStartTime = performance.now();
         const exactPromises = searchVariants.flatMap(variant =>
             dictNames.map(async (dictName) => {
-                const queryStartTime = performance.now();
                 const entries = await searchInDictionary(dictName, variant, 'exact');
-                const queryTime = performance.now() - queryStartTime;
-                if (queryTime > 10) {
-                    console.log(`[Dictionary] ⏱️  searchInDictionary("${dictName}", "${variant}") took ${queryTime.toFixed(2)}ms, found ${entries.length} entries`);
-                }
                 return { dictName, entries, variant };
             })
         );
         const exactResults = await Promise.all(exactPromises);
-        const exactSearchTime = performance.now() - exactSearchStartTime;
-        if (exactSearchTime > 10) {
-            console.log(`[Dictionary] ⏱️  Exact search for "${searchText}" took ${exactSearchTime.toFixed(2)}ms (${searchVariants.length} variants × ${dictNames.length} dicts)`);
-        }
-
-        const exactMatches: string[] = [];
 
         for (const { dictName, entries, variant } of exactResults) {
             for (const entry of entries) {
@@ -227,13 +194,11 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
                             const termExactMatch = !!(entry.term === searchText || entry.term === searchTextHiragana);
                             // Treat as exact match if either term OR reading matches exactly
                             const isExactMatch = termExactMatch || readingExactMatch;
-                            const matchInfo = `${entry.term}【${entry.reading || ''}】 (${dictName}, from variant "${variant}", exact=${isExactMatch})`;
-                            exactMatches.push(matchInfo);
                             resultsWithLength.push({
                                 entry: { ...entry, dictionary: dictName },
                                 originalTextLength,
                                 fromDeinflection: false,
-                                readingExactMatch: isExactMatch // Use termExactMatch OR readingExactMatch
+                                readingExactMatch: isExactMatch
                             });
                             seen.add(key);
                             maxOriginalTextLength = Math.max(maxOriginalTextLength, originalTextLength);
@@ -255,13 +220,11 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
                             const termExactMatch = !!(entry.term === searchText || entry.term === searchTextHiragana);
                             // Treat as exact match if either term OR reading matches exactly
                             const isExactMatch = termExactMatch || readingExactMatch;
-                            const matchInfo = `${entry.term}【${entry.reading || ''}】 (${dictName}, from variant "${variant}", exact=${isExactMatch})`;
-                            exactMatches.push(matchInfo);
                             resultsWithLength.push({
                                 entry: { ...entry, dictionary: dictName },
                                 originalTextLength,
                                 fromDeinflection: false,
-                                readingExactMatch: isExactMatch // Use termExactMatch OR readingExactMatch
+                                readingExactMatch: isExactMatch
                             });
                             seen.add(key);
                             maxOriginalTextLength = Math.max(maxOriginalTextLength, originalTextLength);
@@ -270,10 +233,6 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
                     }
                 }
             }
-        }
-
-        if (exactMatches.length > 0) {
-            console.log(`[Dictionary] Exact matches for "${searchText}":`, exactMatches);
         }
 
         // EARLY TERMINATION CHECK #1: Only skip deinflections if we have exact matches
@@ -289,120 +248,74 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
             );
 
             if (exactDirectMatches.length > 0) {
-                // Skip deinflections at this length to save time, but continue searching shorter substrings
                 shouldSkipDeinflections = true;
-                console.log(`[Dictionary] Skipping deinflections at length ${originalTextLength} - found ${exactDirectMatches.length} exact direct match(es)`);
             }
         }
 
         // 2. Try deinflected forms for this substring (skip if we have perfect direct matches)
         // YOMITAN BEHAVIOR: Deinflect BOTH katakana and hiragana variants
         // This ensures "ゲロ" → "げろ" → deinflect → finds "げろ"
-        if (shouldSkipDeinflections) {
-            console.log(`[Dictionary] Skipping deinflections for "${searchText}" - already have perfect matches`);
-        } else {
-        const allDeinflections = new Set<string>();
-        for (const variant of searchVariants) {
-            const deinflections = getDeinflectionCandidates(variant);
-            for (const deinflected of deinflections) {
-                allDeinflections.add(deinflected);
-            }
-        }
-        const deinflections = Array.from(allDeinflections);
-        const deinflectMatches: string[] = [];
-        if (deinflections.length > 1 || (deinflections.length === 1 && !searchVariants.includes(deinflections[0]))) {
-            console.log(`[Dictionary] Deinflection candidates for "${searchText}" (variants: ${searchVariants.join(', ')}):`, deinflections);
-        }
-        for (const deinflected of deinflections) {
-            if (searchVariants.includes(deinflected)) continue; // Skip if same as original variants
-
-            // Search all dictionaries in parallel
-            // Use 'exact' matching for deinflected forms since we know the exact term
-            const deinflectSearchStartTime = performance.now();
-            const deinflectPromises = dictNames.map(async (dictName) => {
-                const queryStartTime = performance.now();
-                const entries = await searchInDictionary(dictName, deinflected, 'exact');
-                const queryTime = performance.now() - queryStartTime;
-                if (queryTime > 10) {
-                    console.log(`[Dictionary] ⏱️  searchInDictionary("${dictName}", "${deinflected}") took ${queryTime.toFixed(2)}ms, found ${entries.length} entries`);
+        if (!shouldSkipDeinflections) {
+            const allDeinflections = new Set<string>();
+            for (const variant of searchVariants) {
+                const deinflections = getDeinflectionCandidates(variant);
+                for (const deinflected of deinflections) {
+                    allDeinflections.add(deinflected);
                 }
-                return { dictName, entries };
-            });
-            const deinflectResults = await Promise.all(deinflectPromises);
-            const deinflectSearchTime = performance.now() - deinflectSearchStartTime;
-            if (deinflectSearchTime > 10) {
-                console.log(`[Dictionary] ⏱️  Deinflection search for "${deinflected}" took ${deinflectSearchTime.toFixed(2)}ms (${dictNames.length} dicts)`);
             }
+            const deinflections = Array.from(allDeinflections);
+            for (const deinflected of deinflections) {
+                if (searchVariants.includes(deinflected)) continue; // Skip if same as original variants
 
-            for (const { dictName, entries } of deinflectResults) {
-                for (const entry of entries) {
-                    // Match by either term OR reading
-                    const termMatches = entry.term === deinflected;
-                    const readingMatches = entry.reading && entry.reading === deinflected;
+                const deinflectPromises = dictNames.map(async (dictName) => {
+                    const entries = await searchInDictionary(dictName, deinflected, 'exact');
+                    return { dictName, entries };
+                });
+                const deinflectResults = await Promise.all(deinflectPromises);
 
-                    if (!termMatches && !readingMatches) {
-                        continue;
-                    }
+                for (const { dictName, entries } of deinflectResults) {
+                    for (const entry of entries) {
+                        // Match by either term OR reading
+                        const termMatches = entry.term === deinflected;
+                        const readingMatches = entry.reading && entry.reading === deinflected;
 
-                    // Include dictionary name in key to allow same term/reading from different dictionaries
-                    const key = `${dictName}|${entry.term}|${entry.reading}`;
-                    if (!seen.has(key)) {
-                        // Check if reading exactly matches the deinflected form
-                        const readingExactMatch = entry.reading && entry.reading === deinflected;
-                        const matchInfo = `${entry.term}【${entry.reading || ''}】 (${dictName}, from deinflection "${deinflected}", exact=${readingExactMatch})`;
-                        deinflectMatches.push(matchInfo);
-                        resultsWithLength.push({
-                            entry: { ...entry, dictionary: dictName },
-                            originalTextLength,
-                            fromDeinflection: true,
-                            readingExactMatch: readingExactMatch || false
-                        });
-                        seen.add(key);
-                        maxOriginalTextLength = Math.max(maxOriginalTextLength, originalTextLength);
-                        foundAtThisLength = true;
+                        if (!termMatches && !readingMatches) {
+                            continue;
+                        }
 
-                        // If this entry has a kanji term and the deinflected form matches the reading,
-                        // search for ALL readings of this kanji term
-                        if (hasKanji && /[\u4E00-\u9FFF]/.test(entry.term) &&
-                            (entry.term === deinflected || entry.reading === deinflected)) {
-                            await searchAllReadingsForTerm(entry.term, originalTextLength);
+                        // Include dictionary name in key to allow same term/reading from different dictionaries
+                        const key = `${dictName}|${entry.term}|${entry.reading}`;
+                        if (!seen.has(key)) {
+                            const readingExactMatch = entry.reading && entry.reading === deinflected;
+                            resultsWithLength.push({
+                                entry: { ...entry, dictionary: dictName },
+                                originalTextLength,
+                                fromDeinflection: true,
+                                readingExactMatch: readingExactMatch || false
+                            });
+                            seen.add(key);
+                            maxOriginalTextLength = Math.max(maxOriginalTextLength, originalTextLength);
+                            foundAtThisLength = true;
+
+                            // If this entry has a kanji term and the deinflected form matches the reading,
+                            // search for ALL readings of this kanji term
+                            if (hasKanji && /[\u4E00-\u9FFF]/.test(entry.term) &&
+                                (entry.term === deinflected || entry.reading === deinflected)) {
+                                await searchAllReadingsForTerm(entry.term, originalTextLength);
+                            }
                         }
                     }
                 }
             }
         }
 
-        if (deinflectMatches.length > 0) {
-            console.log(`[Dictionary] Deinflection matches for "${searchText}":`, deinflectMatches);
-        }
-        } // End of deinflection block (only executed if not skipped)
-
-        // EARLY TERMINATION: Only stop if we're at very short lengths (1-2 chars) and already have good matches
-        // This prevents processing thousands of single-char entries when we have better matches
-        // But we still want to search all reasonable substrings to show all results like Yomitan
         if (originalTextLength <= 2 && maxOriginalTextLength >= 3) {
-            console.log(`[Dictionary] *** EARLY TERMINATION *** Skipping very short substring (length ${originalTextLength}) - already have matches at length ${maxOriginalTextLength}`);
             break;
         }
-
-        const substringTime = performance.now() - substringStartTime;
-        if (substringTime > 50) {
-            console.log(`[Dictionary] ⏱️  Substring length ${originalTextLength} took ${substringTime.toFixed(2)}ms`);
-        }
     }
-    const substringLoopTime = performance.now() - substringLoopStartTime;
-    console.log(`[Dictionary] ⏱️  Substring loop took ${substringLoopTime.toFixed(2)}ms`);
-    console.log(`[Dictionary] ⏱️  Cache stats: ${cacheHits} hits, ${cacheMisses} misses (${((cacheHits / (cacheHits + cacheMisses)) * 100).toFixed(1)}% hit rate)`);
 
-    // CRITICAL: Prioritize exact reading matches, then by originalTextLength
-    // This prevents "家持【いえもち】" from appearing when "家【いえ】" exists (exact match)
-    // Yomitan prioritizes exact matches over prefix matches
-    const filteringStartTime = performance.now();
-    console.log(`[Dictionary] Total results found: ${resultsWithLength.length}`);
     if (resultsWithLength.length > 0) {
-        // First, check if we have any exact reading matches
         const exactReadingMatches = resultsWithLength.filter(r => r.readingExactMatch);
-        console.log(`[Dictionary] Exact reading matches: ${exactReadingMatches.length}`);
 
         if (exactReadingMatches.length > 0) {
             // We have exact matches - prioritize these
@@ -446,7 +359,6 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
                 results.push(...inexactAtLength.map(r => r.entry));
             }
 
-            console.log(`[Dictionary] Included results from ${allExactMatchLengths.length} different lengths:`, allExactMatchLengths);
         } else {
             // No exact reading matches, use prefix matches
             // YOMITAN BEHAVIOR: Show results from multiple lengths if they're meaningful
@@ -469,10 +381,8 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
                 results.push(...matchesAtLength.map(r => r.entry));
             }
 
-            console.log(`[Dictionary] Included prefix matches from ${meaningfulLengths.length} different lengths:`, meaningfulLengths);
         }
 
-        // Sort by: 1) full word matches (has reading), 2) exact length match, 3) score (frequency)
         // This prioritizes actual words over kanji-only dictionary entries
         // Also track which results came from deinflection to prioritize them
         const resultsWithInfo = results.map(entry => {
@@ -529,27 +439,15 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
         results.length = 0;
         results.push(...resultsWithInfo.map(r => r.entry));
 
-        console.log(`[Dictionary] Final sorted results for "${text}":`, results.map(r => `${r.term}【${r.reading || ''}】`));
-        const filteringTime = performance.now() - filteringStartTime;
-        console.log(`[Dictionary] ⏱️  Filtering and sorting took ${filteringTime.toFixed(2)}ms`);
-
-        // Only return results if we found meaningful matches (not filtered out single-char matches)
         if (results.length > 0) {
-            const totalTime = performance.now() - startTime;
-            console.log(`[Dictionary] ⏱️  TOTAL lookup time: ${totalTime.toFixed(2)}ms`);
             return results;
         }
         // If we filtered out single-char matches and have no results, fall through to partial reading match
     }
 
-    // 4. Final fallback: try partial reading match (for katakana words not in dictionary)
-    // This is what finds "綿糸" (めんし) when searching "メンション"
-    // Also finds "論" (ろん) when searching "ろん" if exact match didn't work
     if (results.length === 0 && text.length >= 2) {
-        console.log(`[Dictionary] Trying partial reading match for "${text}"`);
         for (const dictName in index) {
             const partialMatches = await searchByPartialReading(dictName, text);
-            console.log(`[Dictionary] Partial reading matches from ${dictName}: ${partialMatches.length}`);
             for (const entry of partialMatches) {
                 // Include dictionary name in key to allow same term/reading from different dictionaries
                 const key = `${dictName}|${entry.term}|${entry.reading}`;
@@ -583,19 +481,10 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
 
     // Cache the results
     if (searchCache.size >= MAX_CACHE_SIZE) {
-        // Remove oldest entry
         const oldestKey = searchCache.keys().next().value;
-        searchCache.delete(oldestKey);
+        if (oldestKey !== undefined) searchCache.delete(oldestKey);
     }
     searchCache.set(cacheKey, { results, timestamp: Date.now() });
-
-    const totalTime = performance.now() - startTime;
-    if (results.length === 0) {
-        console.log(`[Dictionary] No results found for "${text}"`);
-    } else {
-        console.log(`[Dictionary] Final results for "${text}" (${results.length} entries):`, results.map(r => `${r.term}【${r.reading || ''}】`));
-    }
-    console.log(`[Dictionary] ⏱️  TOTAL lookup time: ${totalTime.toFixed(2)}ms`);
 
     return results;
 }
@@ -623,7 +512,7 @@ async function findAllReadingsForTerm(dictionaryName: string, term: string): Pro
  */
 // Cache for DataStore.get() results to avoid redundant fetches
 // Key: dictionary name + first character, Value: data object
-const dataStoreCache = new Map<string, { data: any, timestamp: number }>();
+const dataStoreCache = new Map<string, { data: any, timestamp: number; }>();
 const DATASTORE_CACHE_TTL = 10000; // 10 seconds cache for DataStore results
 
 let cacheHits = 0;
@@ -639,28 +528,20 @@ async function getDataStoreData(dictionaryName: string, firstChar: string): Prom
     cacheMisses++;
 
     const dataKey = `${DICTIONARY_KEY}_${dictionaryName}_${firstChar}`;
-    const dataKeyStartTime = performance.now();
     const data = await DataStore.get(dataKey);
-    const dataKeyTime = performance.now() - dataKeyStartTime;
-    if (dataKeyTime > 10) {
-        console.log(`[Dictionary] ⏱️  DataStore.get("${dataKey}") took ${dataKeyTime.toFixed(2)}ms (cache miss)`);
-    }
 
-    // Cache the result
     dataStoreCache.set(cacheKey, { data, timestamp: Date.now() });
 
     // Limit cache size
     if (dataStoreCache.size > 50) {
-        // Remove oldest entry
         const oldestKey = dataStoreCache.keys().next().value;
-        dataStoreCache.delete(oldestKey);
+        if (oldestKey !== undefined) dataStoreCache.delete(oldestKey);
     }
 
     return data;
 }
 
 export async function searchInDictionary(dictionaryName: string, term: string, matchType: 'exact' | 'prefix' = 'prefix'): Promise<DictionaryEntry[]> {
-    const queryStartTime = performance.now();
     const results: DictionaryEntry[] = [];
     const seen = new Set<string>(); // Track entries by "term|reading" to avoid duplicates
 
@@ -697,11 +578,6 @@ export async function searchInDictionary(dictionaryName: string, term: string, m
                     }
                 }
             }
-        }
-
-        const queryTime = performance.now() - queryStartTime;
-        if (queryTime > 20) {
-            console.log(`[Dictionary] ⏱️  searchInDictionary("${dictionaryName}", "${term}", exact) took ${queryTime.toFixed(2)}ms, found ${results.length} entries`);
         }
 
         return results;
@@ -924,16 +800,14 @@ async function processTermBank(dictionaryName: string, termBank: any[], onProgre
     const grouped: { [firstChar: string]: { [term: string]: DictionaryEntry[]; }; } = {};
 
     onProgress?.(25, 100, "Processing entries...");
-    console.log(`[Yomicord] Processing ${totalEntries} dictionary entries...`);
 
     for (let i = 0; i < termBank.length; i++) {
         const entry = termBank[i];
 
         // Report progress periodically
         if (i % REPORT_INTERVAL === 0 || i === termBank.length - 1) {
-            const progress = 25 + Math.floor((i / totalEntries) * 50); // 25-75% range
+            const progress = 25 + Math.floor((i / totalEntries) * 50);
             onProgress?.(progress, 100, `Processing entries... (${i + 1}/${totalEntries})`);
-            console.log(`[Yomicord] Progress: ${i + 1}/${totalEntries} entries processed (${Math.round((i / totalEntries) * 100)}%)`);
         }
 
         // Yomichan format: [term, reading, definitionTags, ruleIdentifiers, score, definitions, sequence, termTags]
@@ -971,7 +845,6 @@ async function processTermBank(dictionaryName: string, termBank: any[], onProgre
         }
     }
 
-    console.log(`[Yomicord] Finished processing entries. Storing to database...`);
     onProgress?.(75, 100, "Storing to database...");
 
     // Store each group
@@ -1029,7 +902,6 @@ async function processTermBank(dictionaryName: string, termBank: any[], onProgre
         await DataStore.set(key, merged);
     }
 
-    console.log(`[Yomicord] Dictionary import complete!`);
 }
 
 /**
@@ -1049,7 +921,6 @@ export async function deleteDictionary(dictionaryName: string): Promise<void> {
 
     if (keysToDelete.length > 0) {
         await DataStore.delMany(keysToDelete);
-        console.log(`[Yomicord] Deleted ${keysToDelete.length} data keys for dictionary "${dictionaryName}"`);
     }
 }
 
@@ -1099,7 +970,6 @@ export async function cleanupOrphanedDictionaryKeys(): Promise<number> {
     const orphaned = await findOrphanedDictionaryKeys();
     if (orphaned.length > 0) {
         await DataStore.delMany(orphaned);
-        console.log(`[Yomicord] Cleaned up ${orphaned.length} orphaned dictionary keys`);
     }
     return orphaned.length;
 }
