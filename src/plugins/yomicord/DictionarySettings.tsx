@@ -11,7 +11,7 @@ import { Paragraph } from "@components/Paragraph";
 import { Span } from "@components/Span";
 import { TextInput, Toasts, useEffect, useState } from "@webpack/common";
 
-import { cleanupOrphanedDictionaryKeys, deleteDictionary, findOrphanedDictionaryKeys, getDictionaryPriorities, getInstalledDictionaries, importDictionaryJSON, importMultipleDictionaryFiles, updateDictionaryPriority, type ProgressCallback } from "./dictionary";
+import { deleteDictionary, getDictionaryPriorities, getInstalledDictionaries, importDictionaryJSON, importMultipleDictionaryFiles, updateDictionaryPriority, type ProgressCallback } from "./dictionary";
 
 export function DictionarySettings() {
     const [dictionaries, setDictionaries] = useState<string[]>([]);
@@ -19,7 +19,6 @@ export function DictionarySettings() {
     const [dictionaryName, setDictionaryName] = useState("JMdict");
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState<{ current: number; total: number; stage: string; } | null>(null);
-    const [cleaning, setCleaning] = useState(false);
 
     const loadDictionaries = async () => {
         const [dicts, prio] = await Promise.all([getInstalledDictionaries(), getDictionaryPriorities()]);
@@ -108,37 +107,6 @@ export function DictionarySettings() {
         await loadDictionaries();
     };
 
-    const handleCleanupOrphaned = async () => {
-        setCleaning(true);
-        try {
-            const orphanedKeys = await findOrphanedDictionaryKeys();
-            if (orphanedKeys.length === 0) {
-                Toasts.show({
-                    message: "No orphaned dictionary data found",
-                    id: Toasts.genId(),
-                    type: Toasts.Type.MESSAGE
-                });
-                setCleaning(false);
-                return;
-            }
-
-            const deleted = await cleanupOrphanedDictionaryKeys();
-            Toasts.show({
-                message: `Cleaned up ${deleted} orphaned dictionary key${deleted === 1 ? "" : "s"}`,
-                id: Toasts.genId(),
-                type: Toasts.Type.SUCCESS
-            });
-        } catch (error) {
-            Toasts.show({
-                message: `Error cleaning up: ${error instanceof Error ? error.message : "Unknown error"}`,
-                id: Toasts.genId(),
-                type: Toasts.Type.FAILURE
-            });
-        } finally {
-            setCleaning(false);
-        }
-    };
-
     return (
         <div>
             <section>
@@ -211,21 +179,6 @@ export function DictionarySettings() {
                         </div>
                     )}
                 </div>
-
-                <Divider style={{ marginTop: "1em", marginBottom: "1em" }} />
-
-                <Heading tag="h5">Cleanup</Heading>
-                <Paragraph style={{ marginBottom: "10px" }}>
-                    Remove orphaned dictionary data that may be left over from deleted dictionaries
-                </Paragraph>
-                <Button
-                    onClick={handleCleanupOrphaned}
-                    disabled={cleaning}
-                    variant="primary"
-                    size="small"
-                >
-                    {cleaning ? "Cleaning..." : "Clean Up Orphaned Data"}
-                </Button>
 
                 <Divider style={{ marginTop: "1em", marginBottom: "1em" }} />
 
