@@ -4,9 +4,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { Button } from "@components/Button";
 import { Divider } from "@components/Divider";
 import { Heading } from "@components/Heading";
-import { Button, Forms, Text, TextInput, Toasts, useEffect, useState } from "@webpack/common";
+import { Paragraph } from "@components/Paragraph";
+import { Span } from "@components/Span";
+import { TextInput, Toasts, useEffect, useState } from "@webpack/common";
 
 import { cleanupOrphanedDictionaryKeys, deleteDictionary, findOrphanedDictionaryKeys, getDictionaryPriorities, getInstalledDictionaries, importDictionaryJSON, importMultipleDictionaryFiles, updateDictionaryPriority, type ProgressCallback } from "./dictionary";
 
@@ -140,9 +143,9 @@ export function DictionarySettings() {
         <div>
             <section>
                 <Heading tag="h3">Dictionary Management</Heading>
-                <Forms.FormText>
+                <Paragraph>
                     Upload Yomichan-compatible dictionary JSON files (term_bank_*.json)
-                </Forms.FormText>
+                </Paragraph>
                 <Divider style={{ marginTop: "1em", marginBottom: "1em" }} />
 
                 <Heading tag="h5">Import Dictionary</Heading>
@@ -166,13 +169,14 @@ export function DictionarySettings() {
                         <Button
                             disabled={uploading || !dictionaryName.trim()}
                             onClick={() => document.getElementById("dictionary-upload")?.click()}
+                            size="small"
                         >
                             {uploading ? "Importing..." : "Select JSON File(s)"}
                         </Button>
                     </label>
-                    <Text style={{ marginTop: "8px", fontSize: "0.9em", color: "var(--text-muted)" }}>
+                    <Span style={{ marginTop: "8px", fontSize: "0.9em", color: "var(--text-muted)" }}>
                         You can select multiple term_bank files at once
-                    </Text>
+                    </Span>
 
                     {progress && (
                         <div style={{ marginTop: "12px" }}>
@@ -182,12 +186,12 @@ export function DictionarySettings() {
                                 marginBottom: "4px",
                                 fontSize: "0.9em"
                             }}>
-                                <Text style={{ color: "var(--text-muted)" }}>
+                                <Span style={{ color: "var(--text-muted)" }}>
                                     {progress.stage}
-                                </Text>
-                                <Text style={{ color: "var(--text-muted)" }}>
+                                </Span>
+                                <Span style={{ color: "var(--text-muted)" }}>
                                     {progress.current}%
-                                </Text>
+                                </Span>
                             </div>
                             <div style={{
                                 width: "100%",
@@ -211,14 +215,14 @@ export function DictionarySettings() {
                 <Divider style={{ marginTop: "1em", marginBottom: "1em" }} />
 
                 <Heading tag="h5">Cleanup</Heading>
-                <Forms.FormText style={{ marginBottom: "10px" }}>
+                <Paragraph style={{ marginBottom: "10px" }}>
                     Remove orphaned dictionary data that may be left over from deleted dictionaries
-                </Forms.FormText>
+                </Paragraph>
                 <Button
                     onClick={handleCleanupOrphaned}
                     disabled={cleaning}
-                    color={Button.Colors.BRAND}
-                    size={Button.Sizes.SMALL}
+                    variant="primary"
+                    size="small"
                 >
                     {cleaning ? "Cleaning..." : "Clean Up Orphaned Data"}
                 </Button>
@@ -227,14 +231,14 @@ export function DictionarySettings() {
 
                 <Heading tag="h5">Installed Dictionaries</Heading>
                 {dictionaries.length === 0 ? (
-                    <Text style={{ color: "var(--text-muted)" }}>
+                    <Paragraph style={{ color: "var(--text-muted)" }}>
                         No dictionaries installed yet. Upload dictionary files above to get started.
-                    </Text>
+                    </Paragraph>
                 ) : (
                     <div>
-                        <Forms.FormText style={{ marginBottom: "8px", color: "var(--text-muted)" }}>
+                        <Paragraph style={{ marginBottom: "8px", color: "var(--text-muted)" }}>
                             Priority number (lower = first in popups).
-                        </Forms.FormText>
+                        </Paragraph>
                         {dictionaries.map((dict, idx) => (
                             <div
                                 key={dict}
@@ -248,7 +252,7 @@ export function DictionarySettings() {
                                     borderRadius: "4px"
                                 }}
                             >
-                                <Text>{dict}</Text>
+                                <Span>{dict}</Span>
                                 <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                                     <TextInput
                                         type="number"
@@ -265,8 +269,8 @@ export function DictionarySettings() {
                                         style={{ width: "56px" }}
                                     />
                                     <Button
-                                        color={Button.Colors.RED}
-                                        size={Button.Sizes.SMALL}
+                                        variant="dangerPrimary"
+                                        size="small"
                                         onClick={() => handleDelete(dict)}
                                     >
                                         Delete
@@ -280,12 +284,12 @@ export function DictionarySettings() {
 
             <section style={{ marginTop: "20px" }}>
                 <Heading tag="h5">How to Get Dictionaries</Heading>
-                <Forms.FormText>
+                <Paragraph>
                     1. Download a Yomichan dictionary (e.g., JMdict) from <a href="https://github.com/themoeway/jmdict-yomitan" target="_blank">here</a><br />
                     2. Extract the ZIP file<br />
                     3. Upload the term_bank_*.json files using the button above<br />
                     4. You can upload multiple files at once!
-                </Forms.FormText>
+                </Paragraph>
             </section>
         </div>
     );
