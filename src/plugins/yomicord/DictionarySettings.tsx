@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { Button, Forms, Text, TextInput, useEffect, useState } from "@webpack/common";
-import { Toasts } from "@webpack/common";
+import { Button, Forms, Text, TextInput, Toasts, useEffect, useState } from "@webpack/common";
 
 import { cleanupOrphanedDictionaryKeys, deleteDictionary, findOrphanedDictionaryKeys, getInstalledDictionaries, importDictionaryJSON, importMultipleDictionaryFiles, type ProgressCallback } from "./dictionary";
 
@@ -34,7 +33,6 @@ export function DictionarySettings() {
 
         const onProgress: ProgressCallback = (current, total, stage) => {
             setProgress({ current, total, stage });
-            console.log(`[Yomicord] Import progress: ${current}% - ${stage}`);
         };
 
         try {
@@ -143,7 +141,7 @@ export function DictionarySettings() {
                     onChange={setDictionaryName}
                     style={{ marginBottom: "10px" }}
                 />
-                
+
                 <div style={{ marginBottom: "20px" }}>
                     <input
                         type="file"
@@ -164,12 +162,12 @@ export function DictionarySettings() {
                     <Text style={{ marginTop: "8px", fontSize: "0.9em", color: "var(--text-muted)" }}>
                         You can select multiple term_bank files at once
                     </Text>
-                    
+
                     {progress && (
                         <div style={{ marginTop: "12px" }}>
-                            <div style={{ 
-                                display: "flex", 
-                                justifyContent: "space-between", 
+                            <div style={{
+                                display: "flex",
+                                justifyContent: "space-between",
                                 marginBottom: "4px",
                                 fontSize: "0.9em"
                             }}>
