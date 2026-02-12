@@ -374,9 +374,6 @@ function showTooltip(x: number, y: number, content: string | HTMLElement, popupL
                 }
             }
             if (!clickedInsideAnyTooltip) {
-                // Only log occasionally to avoid spam
-                if (Math.random() < 0.01) {  // Log ~1% of clicks to avoid spam
-                }
                 hideAllTooltips("click outside tooltip");
             }
         };
@@ -481,28 +478,6 @@ function isMainEntryWord(element: Element | null): boolean {
     while (current) {
         // Check if this element has the data attribute marking it as a main entry (term or reading)
         if (current.getAttribute("data-yomicord-entry") === "true") {
-            return true;
-        }
-        // Stop checking if we've left the tooltip
-        if (current.classList.contains("yomicord-tooltip")) {
-            break;
-        }
-        current = current.parentElement;
-    }
-
-    return false;
-}
-
-/**
- * Checks if the element is definition text that should be scannable
- */
-function isDefinitionText(element: Element | null): boolean {
-    if (!element) return false;
-
-    let current: Element | null = element;
-    while (current) {
-        // Check if this element has the data attribute marking it as a definition
-        if (current.getAttribute("data-yomicord-definition") === "true") {
             return true;
         }
         // Stop checking if we've left the tooltip
@@ -794,14 +769,6 @@ async function handleMouseMoveDebounced(e: MouseEvent) {
 function createLoadingIndicator(): HTMLElement {
     const container = document.createElement("div");
     container.className = "yomicord-loading";
-    container.style.cssText = `
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 8px 20px;
-        min-height: 32px;
-        width: fit-content;
-    `;
 
     const spinnerWrapper = document.createElement("div");
     spinnerWrapper.style.cssText = `
