@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { Divider } from "@components/Divider";
+import { Heading } from "@components/Heading";
 import { Button, Forms, Text, TextInput, Toasts, useEffect, useState } from "@webpack/common";
 
 import { cleanupOrphanedDictionaryKeys, deleteDictionary, findOrphanedDictionaryKeys, getDictionaryPriorities, getInstalledDictionaries, importDictionaryJSON, importMultipleDictionaryFiles, updateDictionaryPriority, type ProgressCallback } from "./dictionary";
@@ -136,14 +138,14 @@ export function DictionarySettings() {
 
     return (
         <div>
-            <Forms.FormSection>
-                <Forms.FormTitle tag="h3">Dictionary Management</Forms.FormTitle>
+            <section>
+                <Heading tag="h3">Dictionary Management</Heading>
                 <Forms.FormText>
                     Upload Yomichan-compatible dictionary JSON files (term_bank_*.json)
                 </Forms.FormText>
-                <Forms.FormDivider style={{ marginTop: "1em", marginBottom: "1em" }} />
+                <Divider style={{ marginTop: "1em", marginBottom: "1em" }} />
 
-                <Forms.FormTitle tag="h5">Import Dictionary</Forms.FormTitle>
+                <Heading tag="h5">Import Dictionary</Heading>
                 <TextInput
                     placeholder="Dictionary Name (e.g., JMdict)"
                     value={dictionaryName}
@@ -206,9 +208,9 @@ export function DictionarySettings() {
                     )}
                 </div>
 
-                <Forms.FormDivider style={{ marginTop: "1em", marginBottom: "1em" }} />
+                <Divider style={{ marginTop: "1em", marginBottom: "1em" }} />
 
-                <Forms.FormTitle tag="h5">Cleanup</Forms.FormTitle>
+                <Heading tag="h5">Cleanup</Heading>
                 <Forms.FormText style={{ marginBottom: "10px" }}>
                     Remove orphaned dictionary data that may be left over from deleted dictionaries
                 </Forms.FormText>
@@ -221,9 +223,9 @@ export function DictionarySettings() {
                     {cleaning ? "Cleaning..." : "Clean Up Orphaned Data"}
                 </Button>
 
-                <Forms.FormDivider style={{ marginTop: "1em", marginBottom: "1em" }} />
+                <Divider style={{ marginTop: "1em", marginBottom: "1em" }} />
 
-                <Forms.FormTitle tag="h5">Installed Dictionaries</Forms.FormTitle>
+                <Heading tag="h5">Installed Dictionaries</Heading>
                 {dictionaries.length === 0 ? (
                     <Text style={{ color: "var(--text-muted)" }}>
                         No dictionaries installed yet. Upload dictionary files above to get started.
@@ -274,17 +276,17 @@ export function DictionarySettings() {
                         ))}
                     </div>
                 )}
-            </Forms.FormSection>
+            </section>
 
-            <Forms.FormSection style={{ marginTop: "20px" }}>
-                <Forms.FormTitle tag="h5">How to Get Dictionaries</Forms.FormTitle>
+            <section style={{ marginTop: "20px" }}>
+                <Heading tag="h5">How to Get Dictionaries</Heading>
                 <Forms.FormText>
                     1. Download a Yomichan dictionary (e.g., JMdict) from <a href="https://github.com/themoeway/jmdict-yomitan" target="_blank">here</a><br />
                     2. Extract the ZIP file<br />
                     3. Upload the term_bank_*.json files using the button above<br />
                     4. You can upload multiple files at once!
                 </Forms.FormText>
-            </Forms.FormSection>
+            </section>
         </div>
     );
 }
