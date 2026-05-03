@@ -9,12 +9,12 @@ import * as DataStore from "@api/DataStore";
 import { definePluginSettings } from "@api/Settings";
 import { Button } from "@components/Button";
 import { Paragraph } from "@components/Paragraph";
-import { Devs } from "@utils/constants";
+import { Devs, IS_MAC } from "@utils/constants";
 import { Logger } from "@utils/Logger";
 import { ModalCloseButton, ModalContent, ModalHeader, type ModalProps, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import definePlugin, { OptionType } from "@utils/types";
 import { chooseFile, saveFile } from "@utils/web";
-import { Alerts, ChannelStore, React, Toasts, UserStore, Checkbox, ScrollerThin } from "@webpack/common";
+import { Alerts, ChannelStore, React, Toasts, UserStore, Checkbox, ScrollerThin, SelectedChannelStore } from "@webpack/common";
 import { Heading } from "@components/index";
 import { nanoid } from "nanoid";
 
