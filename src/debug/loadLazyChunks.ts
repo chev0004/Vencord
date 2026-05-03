@@ -10,7 +10,37 @@ import { ModuleFactory } from "@vencord/discord-types/webpack";
 import * as Webpack from "@webpack";
 import { wreq } from "@webpack";
 import { AnyModuleFactory } from "@webpack/types";
-import pLimit from "p-limit";
+
+function asyncLimit(concurrency: number) {
+    let running = 0;
+    type Task<T> = { fn: () => Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void; };
+    const pending: Task<unknown>[] = [];
+
+    function runNext() {
+        if (running >= concurrency || pending.length === 0) return;
+        running++;
+        const task = pending.shift()!;
+        task.fn().then(
+            val => {
+                running--;
+                task.resolve(val);
+                runNext();
+            },
+            err => {
+                running--;
+                task.reject(err);
+                runNext();
+            }
+        );
+    }
+
+    return function limit<T>(fn: () => Promise<T>): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            pending.push({ fn, resolve, reject });
+            runNext();
+        });
+    };
+}
 
 function getWebpackChunkMap() {
     const sym = Symbol();
@@ -32,7 +62,7 @@ function getWebpackChunkMap() {
 
 export async function loadLazyChunks() {
     const LazyChunkLoaderLogger = new Logger("LazyChunkLoader");
-    const queue = pLimit(50);
+    const limit = asyncLimit(50);
 
     try {
         LazyChunkLoaderLogger.log("Loading all chunks...");
@@ -93,7 +123,7 @@ export async function loadLazyChunks() {
 
                     if (wreq.u(id) == null || wreq.u(id) === "undefined.js") continue;
 
-                    const isWorkerAsset = await queue(() =>
+                    const isWorkerAsset = await limit(() =>
                         fetch(wreq.p + wreq.u(id))
                             .then(r => r.text())
                             .then(t => /importScripts\(|self\.postMessage/.test(t))
@@ -193,7 +223,7 @@ export async function loadLazyChunks() {
             return !(validChunks.has(id) || invalidChunks.has(id));
         });
 
-        await Promise.all(chunksLeft.map(async id => queue(async () => {
+        await Promise.all(chunksLeft.map(async id => limit(async () => {
             const isWorkerAsset = await fetch(wreq.p + wreq.u(id))
                 .then(r => r.text())
                 .then(t => /importScripts\(|self\.postMessage/.test(t));
