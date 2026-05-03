@@ -13,8 +13,8 @@ import { AnyModuleFactory } from "@webpack/types";
 
 function asyncLimit(concurrency: number) {
     let running = 0;
-    type Task<T> = { fn: () => Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void; };
-    const pending: Task<unknown>[] = [];
+    type Task = { fn: () => Promise<unknown>; resolve: (v: unknown) => void; reject: (e: unknown) => void; };
+    const pending: Task[] = [];
 
     function runNext() {
         if (running >= concurrency || pending.length === 0) return;
@@ -36,7 +36,11 @@ function asyncLimit(concurrency: number) {
 
     return function limit<T>(fn: () => Promise<T>): Promise<T> {
         return new Promise<T>((resolve, reject) => {
-            pending.push({ fn, resolve, reject });
+            pending.push({
+                fn: () => fn() as Promise<unknown>,
+                resolve: v => resolve(v as T),
+                reject,
+            });
             runNext();
         });
     };
