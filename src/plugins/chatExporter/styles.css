@@ -1,0 +1,126 @@
+/* ── Export modal ─────────────────────────────────────── */
+
+.vc-ce-modal-header {
+    place-content: center space-between;
+}
+
+.vc-ce-modal-title {
+    margin: 0;
+}
+
+.vc-ce-modal-close-button {
+    padding: 0;
+}
+
+.vc-ce-modal-content {
+    padding: 16px 16px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.vc-ce-field label {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.33;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--header-secondary);
+    margin-bottom: 8px;
+}
+
+.vc-ce-date-input {
+    background-color: var(--input-background-default);
+    color: var(--text-default);
+    width: 100%;
+    padding: 10px 12px;
+    outline: none;
+    border: 1px solid var(--input-background-default);
+    border-radius: 4px;
+    font-weight: 500;
+    font-size: 16px;
+    line-height: 1.375;
+    box-sizing: border-box;
+    transition: border-color 0.15s;
+}
+
+.vc-ce-date-input:focus {
+    border-color: var(--text-link);
+}
+
+.vc-ce-date-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.vc-ce-progress {
+    margin: 0;
+    font-size: 14px;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.vc-ce-footer-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    width: 100%;
+}
+
+/* ── Message selection checkboxes ────────────────────── */
+
+/* Ensure message articles can contain absolutely-positioned children */
+[id^="chat-messages-"] {
+    position: relative;
+}
+
+.vc-ce-msg-checkbox {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 10;
+}
+
+.vc-ce-msg-checkbox-inner {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid var(--interactive-normal);
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s, border-color 0.1s;
+    flex-shrink: 0;
+    color: var(--white-500);
+}
+
+.vc-ce-msg-checkbox:hover .vc-ce-msg-checkbox-inner {
+    border-color: var(--brand-500);
+}
+
+.vc-ce-msg-checkbox-checked .vc-ce-msg-checkbox-inner {
+    background: var(--brand-500);
+    border-color: var(--brand-500);
+}
+
+/* Shift content right to make room for checkboxes */
+.vc-ce-selecting [id^="chat-messages-"] > * {
+    padding-left: 44px;
+}
+
+/* Selection bar buttons */
+.vc-ce-confirm-btn {
+    color: var(--brand-500) !important;
+}
+
+.vc-ce-cancel-btn {
+    color: var(--status-danger) !important;
+}
