@@ -45,20 +45,29 @@ import {
 import {
     addRecentSticker,
     applyCategoryOrder,
+    evictStickerImage,
     FAVORITES_EXPANDED_KEY,
+    getCachedExpansion,
+    getCachedFavorites,
+    getCachedLibrary,
+    getCachedOrder,
+    getCachedRecents,
+    getCachedStickerImage,
     getCategoryOrder,
+    getExpansionState,
     getFavorites,
+    getLibrary,
     getRecentStickers,
-    getStickerBlob,
-    LIBRARY_KEY,
+    getStickerImage,
     pruneCategoryOrder,
     RECENT_EXPANDED_KEY,
-    RECENT_KEY,
     RECENT_LIMIT,
+    removeRecentStickers,
     renameCategoryOrder,
     saveCategoryOrder,
     saveExpansionState,
     saveFavorites,
+    saveLibrary,
     settings,
     STICKER_DATA_KEY_PREFIX,
     type StickerCategory,
@@ -149,6 +158,11 @@ const getAccountGuildEntry = () => {
     if (!userId) return null;
     settings.store.accountGuilds ??= {};
     return settings.store.accountGuilds[userId] ?? null;
+};
+
+const getKnownGuildId = (): string | null => {
+    const entry = getAccountGuildEntry();
+    return entry && GuildStore.getGuild(entry.guildId) ? entry.guildId : null;
 };
 
 const ensureStickerGuild = async (): Promise<string | null> => {
@@ -458,8 +472,8 @@ const StickerGridItem: React.FC<{
     anyDragging = false,
 }) => {
         const [isSending, setIsSending] = React.useState(false);
-        const [imageUrl, setImageUrl] = React.useState<string | null>(null);
-        const blobRef = React.useRef<Blob | null>(null);
+        const [imageUrl, setImageUrl] = React.useState<string | null>(() => getCachedStickerImage(file.id)?.url ?? null);
+        const blobRef = React.useRef<Blob | null>(getCachedStickerImage(file.id)?.blob ?? null);
         const itemRef = React.useRef<HTMLDivElement>(null);
         const isClosingRef = React.useRef(isClosing);
 
@@ -469,22 +483,18 @@ const StickerGridItem: React.FC<{
 
         React.useEffect(() => {
             const el = itemRef.current;
-            if (!el || isClosing) return;
+            if (!el || isClosing || blobRef.current) return;
 
             observeStickerLoad(el, () => {
-                getStickerBlob(file.id).then(blob => {
-                    if (!isClosingRef.current && blob) {
-                        blobRef.current = blob;
-                        setImageUrl(URL.createObjectURL(blob));
+                getStickerImage(file.id).then(image => {
+                    if (!isClosingRef.current && image) {
+                        blobRef.current = image.blob;
+                        setImageUrl(image.url);
                     }
                 });
             });
             return () => unobserveStickerLoad(el);
         }, [file.id, isClosing]);
-
-        React.useEffect(() => () => {
-            if (imageUrl) URL.revokeObjectURL(imageUrl);
-        }, [imageUrl]);
 
         const handleStickerClick = async () => {
             const blob = blobRef.current;
@@ -995,13 +1005,14 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
     rootProps,
     channel,
 }) => {
-    const [allCategories, setAllCategories] = React.useState<StickerCategory[]>(
-        [],
-    );
-    const [favoriteIds, setFavoriteIds] = React.useState<Set<string>>(new Set());
-    const [recentIds, setRecentIds] = React.useState<string[]>([]);
-    const [guildId, setGuildIdState] = React.useState<string | null>(null);
-    const [isLoading, setIsLoading] = React.useState(true);
+    const [allCategories, setAllCategories] = React.useState<StickerCategory[]>(() => {
+        const cached = getCachedLibrary();
+        return cached ? applyCategoryOrder(cached, getCachedOrder() ?? []) : [];
+    });
+    const [favoriteIds, setFavoriteIds] = React.useState<Set<string>>(() => new Set(getCachedFavorites() ?? []));
+    const [recentIds, setRecentIds] = React.useState<string[]>(() => getCachedRecents() ?? []);
+    const [guildId, setGuildIdState] = React.useState<string | null>(getKnownGuildId);
+    const [isLoading, setIsLoading] = React.useState(() => getCachedLibrary() === null || getKnownGuildId() === null);
     const [hasStartedLoading, setHasStartedLoading] = React.useState(false);
     const [searchQuery, setSearchQuery] = React.useState("");
     const [draggedCategoryIndex, setDraggedCategoryIndex] = React.useState<number | null>(null);
@@ -1009,7 +1020,10 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
     const draggedStickerSourceRef = React.useRef<string | null>(null);
     const draggedStickerIndexRef = React.useRef<number | null>(null);
 
-    const initialExpansionState = React.useRef<Record<string, boolean>>({});
+    const initialExpansionState = React.useRef<Record<string, boolean>>({
+        [FAVORITES_EXPANDED_KEY]: getCachedExpansion(FAVORITES_EXPANDED_KEY) ?? true,
+        [RECENT_EXPANDED_KEY]: getCachedExpansion(RECENT_EXPANDED_KEY) ?? true,
+    });
     const isClosingRef = React.useRef(false);
 
     const isClosing = rootProps.transitionState === 2;
@@ -1028,8 +1042,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
                 setGuildIdState(id);
                 if (!id) return;
 
-                const libraryData =
-                    (await DataStore.get<StickerCategory[]>(LIBRARY_KEY)) ?? [];
+                const libraryData = await getLibrary();
 
                 const mergedCategories: StickerCategory[] = [];
                 const categoryMap = new Map<string, StickerCategory>();
@@ -1047,14 +1060,14 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
                 }
 
                 if (mergedCategories.length !== libraryData.length) {
-                    await DataStore.set(LIBRARY_KEY, mergedCategories);
+                    await saveLibrary(mergedCategories);
                 }
 
                 const [favIds, recentIdsData, favExpanded, recExpanded, categoryOrder] = await Promise.all([
                     getFavorites(),
                     getRecentStickers(),
-                    DataStore.get<boolean>(FAVORITES_EXPANDED_KEY),
-                    DataStore.get<boolean>(RECENT_EXPANDED_KEY),
+                    getExpansionState(FAVORITES_EXPANDED_KEY),
+                    getExpansionState(RECENT_EXPANDED_KEY),
                     getCategoryOrder(),
                 ]);
 
@@ -1062,8 +1075,8 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
 
                 if (isClosingRef.current) return;
 
-                initialExpansionState.current[FAVORITES_EXPANDED_KEY] = favExpanded ?? true;
-                initialExpansionState.current[RECENT_EXPANDED_KEY] = recExpanded ?? true;
+                initialExpansionState.current[FAVORITES_EXPANDED_KEY] = favExpanded;
+                initialExpansionState.current[RECENT_EXPANDED_KEY] = recExpanded;
 
                 setAllCategories(orderedCategories);
                 setFavoriteIds(new Set(favIds));
@@ -1139,7 +1152,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
             cat.name === oldName ? { ...cat, name: newName } : cat
         );
         setAllCategories(updatedCategories);
-        await DataStore.set(LIBRARY_KEY, updatedCategories);
+        await saveLibrary(updatedCategories);
         await renameCategoryOrder(oldName, newName);
         return true;
     }, [allCategories, isClosing]);
@@ -1154,7 +1167,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
             )
         }));
         setAllCategories(updatedCategories);
-        await DataStore.set(LIBRARY_KEY, updatedCategories);
+        await saveLibrary(updatedCategories);
         return true;
     }, [allCategories, isClosing]);
 
@@ -1168,7 +1181,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
             )
         }));
         setAllCategories(updatedCategories);
-        await DataStore.set(LIBRARY_KEY, updatedCategories);
+        await saveLibrary(updatedCategories);
     }, [allCategories, isClosing]);
 
     const handleStickerDelete = React.useCallback(async (stickerId: string) => {
@@ -1180,7 +1193,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
 
         const newRecentIds = recentIds.filter(id => id !== stickerId);
         setRecentIds(newRecentIds);
-        await DataStore.update<string[]>(RECENT_KEY, (recents = []) => recents.filter(id => id !== stickerId));
+        await removeRecentStickers([stickerId]);
 
         const updatedCategories = allCategories.map(cat => ({
             ...cat,
@@ -1188,8 +1201,9 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
         })).filter(cat => cat.files.length > 0);
 
         setAllCategories(updatedCategories);
-        await DataStore.set(LIBRARY_KEY, updatedCategories);
+        await saveLibrary(updatedCategories);
         await pruneCategoryOrder(updatedCategories.map(c => c.name));
+        evictStickerImage(stickerId);
         await DataStore.del(`${STICKER_DATA_KEY_PREFIX}${stickerId}`);
     }, [allCategories, favoriteIds, recentIds, isClosing]);
 
@@ -1244,7 +1258,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
         if (source === FAVORITES_CATEGORY_ID) {
             await saveFavorites(Array.from(favoriteIds));
         } else if (source && draggedStickerIndexRef.current !== null) {
-            await DataStore.set(LIBRARY_KEY, allCategories);
+            await saveLibrary(allCategories);
         }
         resetStickerDrag();
     }, [allCategories, favoriteIds, resetStickerDrag]);
@@ -1317,7 +1331,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
         }).filter(cat => cat.files.length > 0);
 
         setAllCategories(updatedCategories);
-        await DataStore.set(LIBRARY_KEY, updatedCategories);
+        await saveLibrary(updatedCategories);
         await pruneCategoryOrder(updatedCategories.map(c => c.name));
 
         if (favoriteIds.has(stickerId)) {

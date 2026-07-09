@@ -47,6 +47,42 @@ export const getStickerBlob = async (id: string): Promise<Blob | null> => {
     return blob;
 };
 
+interface StickerImage {
+    url: string;
+    blob: Blob;
+}
+
+const stickerImageCache = new Map<string, StickerImage>();
+const stickerImagePromises = new Map<string, Promise<StickerImage | null>>();
+
+export const getCachedStickerImage = (id: string): StickerImage | null =>
+    stickerImageCache.get(id) ?? null;
+
+export const getStickerImage = (id: string): Promise<StickerImage | null> => {
+    let promise = stickerImagePromises.get(id);
+    if (!promise) {
+        promise = (async () => {
+            const blob = await getStickerBlob(id);
+            if (!blob) {
+                stickerImagePromises.delete(id);
+                return null;
+            }
+            const image = { url: URL.createObjectURL(blob), blob };
+            stickerImageCache.set(id, image);
+            return image;
+        })();
+        stickerImagePromises.set(id, promise);
+    }
+    return promise;
+};
+
+export const evictStickerImage = (id: string): void => {
+    const cached = stickerImageCache.get(id);
+    if (cached) URL.revokeObjectURL(cached.url);
+    stickerImageCache.delete(id);
+    stickerImagePromises.delete(id);
+};
+
 const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
@@ -81,7 +117,7 @@ const OCR_CHUNK_SIZE = 25;
 export const scanStickerText = async (): Promise<void> => {
     if (!Native) return;
 
-    const categories = (await DataStore.get<StickerCategory[]>(LIBRARY_KEY)) ?? [];
+    const categories = await getLibrary();
     const pending = categories.flatMap(c => c.files).filter(f => f.ocrText === undefined);
     if (pending.length === 0) {
         Toasts.show({ message: "All stickers are already scanned.", type: Toasts.Type.MESSAGE, id: Toasts.genId() });
@@ -111,7 +147,7 @@ export const scanStickerText = async (): Promise<void> => {
         for (const file of chunk) {
             textById[file.id] ??= "";
         }
-        await DataStore.update<StickerCategory[]>(LIBRARY_KEY, (cats = []) =>
+        await updateLibrary(cats =>
             cats.map(cat => ({
                 ...cat,
                 files: cat.files.map(file =>
@@ -326,7 +362,7 @@ const StickerManagementSetting: React.FC = () => {
 
     const fetchCategories = async () => {
         setLoading(true);
-        const cats = (await DataStore.get<StickerCategory[]>(LIBRARY_KEY)) ?? [];
+        const cats = await getLibrary();
         const order = await getCategoryOrder();
         const orderedCats = applyCategoryOrder(cats, order);
         setCategories(orderedCats);
@@ -428,18 +464,19 @@ const StickerManagementSetting: React.FC = () => {
 
         await DataStore.setMany(stickerDataToSave);
 
-        await DataStore.update<StickerCategory[]>(LIBRARY_KEY, (existingData = []) => {
+        await updateLibrary(existingData => {
+            const result = [...existingData];
             for (const newCategory of newCategories) {
-                const existingCategory = existingData.find(c => c.name === newCategory.name);
+                const existingCategory = result.find(c => c.name === newCategory.name);
                 if (existingCategory) {
                     const existingNames = new Set(existingCategory.files.map(f => f.name));
                     const uniqueNewFiles = newCategory.files.filter(f => !existingNames.has(f.name));
                     existingCategory.files.push(...uniqueNewFiles);
                 } else {
-                    existingData.push(newCategory);
+                    result.push(newCategory);
                 }
             }
-            return existingData;
+            return result;
         });
 
         const totalStickers = stickerDataToSave.length;
@@ -475,11 +512,13 @@ const StickerManagementSetting: React.FC = () => {
         });
 
         await deleteStickerData(deletedStickerIds);
-        await DataStore.set(LIBRARY_KEY, remainingCategories);
+        deletedStickerIds.forEach(evictStickerImage);
+        await saveLibrary(remainingCategories);
         await pruneCategoryOrder(remainingCategories.map(c => c.name));
 
-        await DataStore.update<string[]>(FAVORITES_KEY, (favs = []) => favs.filter(id => !deletedStickerIds.includes(id)));
-        await DataStore.update<string[]>(RECENT_KEY, (recents = []) => recents.filter(id => !deletedStickerIds.includes(id)));
+        const deletedIdSet = new Set(deletedStickerIds);
+        await saveFavorites((await getFavorites()).filter(id => !deletedIdSet.has(id)));
+        await removeRecentStickers(deletedStickerIds);
 
         Toasts.pop();
         Toasts.show({ message: `Deleted ${categoryNames.length} categor${categoryNames.length === 1 ? "y" : "ies"} and their stickers.`, type: Toasts.Type.SUCCESS, id: Toasts.genId() });
@@ -605,62 +644,101 @@ export const settings = definePluginSettings({
     accountGuilds: Record<string, { guildId: string; slotId: string | null; }>;
 }>();
 
-export const getFavorites = async (): Promise<string[]> => {
-    return (await DataStore.get<string[]>(FAVORITES_KEY)) ?? [];
+let libraryCache: StickerCategory[] | null = null;
+let favoritesCache: string[] | null = null;
+let recentsCache: string[] | null = null;
+let orderCache: string[] | null = null;
+const expansionCache = new Map<string, boolean>();
+
+export const getLibrary = async (): Promise<StickerCategory[]> => {
+    libraryCache ??= (await DataStore.get<StickerCategory[]>(LIBRARY_KEY)) ?? [];
+    return libraryCache;
 };
 
+export const getCachedLibrary = (): StickerCategory[] | null => libraryCache;
+
+export const saveLibrary = async (categories: StickerCategory[]): Promise<void> => {
+    libraryCache = categories;
+    await DataStore.set(LIBRARY_KEY, categories);
+};
+
+export const updateLibrary = async (updater: (categories: StickerCategory[]) => StickerCategory[]): Promise<StickerCategory[]> => {
+    const updated = updater(await getLibrary());
+    await saveLibrary(updated);
+    return updated;
+};
+
+export const getFavorites = async (): Promise<string[]> => {
+    favoritesCache ??= (await DataStore.get<string[]>(FAVORITES_KEY)) ?? [];
+    return favoritesCache;
+};
+
+export const getCachedFavorites = (): string[] | null => favoritesCache;
+
 export const saveFavorites = async (favorites: string[]): Promise<void> => {
+    favoritesCache = favorites;
     await DataStore.set(FAVORITES_KEY, favorites);
 };
 
 export const getRecentStickers = async (): Promise<string[]> => {
-    return (await DataStore.get<string[]>(RECENT_KEY)) ?? [];
+    recentsCache ??= (await DataStore.get<string[]>(RECENT_KEY)) ?? [];
+    return recentsCache;
+};
+
+export const getCachedRecents = (): string[] | null => recentsCache;
+
+const saveRecentStickers = async (recents: string[]): Promise<void> => {
+    recentsCache = recents;
+    await DataStore.set(RECENT_KEY, recents);
 };
 
 export const addRecentSticker = async (stickerId: string): Promise<void> => {
-    await DataStore.update<string[]>(RECENT_KEY, (recents = []) => {
-        const index = recents.indexOf(stickerId);
-        if (index > -1) {
-            recents.splice(index, 1);
-        }
-        recents.unshift(stickerId);
-        if (recents.length > RECENT_LIMIT) {
-            recents.length = RECENT_LIMIT;
-        }
-        return recents;
-    });
+    const recents = (await getRecentStickers()).filter(id => id !== stickerId);
+    recents.unshift(stickerId);
+    await saveRecentStickers(recents.slice(0, RECENT_LIMIT));
+};
+
+export const removeRecentStickers = async (stickerIds: string[]): Promise<void> => {
+    const ids = new Set(stickerIds);
+    await saveRecentStickers((await getRecentStickers()).filter(id => !ids.has(id)));
 };
 
 export const getExpansionState = async (key: string): Promise<boolean> => {
-    return (await DataStore.get<boolean>(key)) ?? true;
+    if (!expansionCache.has(key)) {
+        expansionCache.set(key, (await DataStore.get<boolean>(key)) ?? true);
+    }
+    return expansionCache.get(key)!;
 };
+
+export const getCachedExpansion = (key: string): boolean | undefined => expansionCache.get(key);
 
 export const saveExpansionState = async (
     key: string,
     isExpanded: boolean,
 ): Promise<void> => {
+    expansionCache.set(key, isExpanded);
     await DataStore.set(key, isExpanded);
 };
 
 export const getCategoryOrder = async (): Promise<string[]> => {
-    return (await DataStore.get<string[]>(CATEGORY_ORDER_KEY)) ?? [];
+    orderCache ??= (await DataStore.get<string[]>(CATEGORY_ORDER_KEY)) ?? [];
+    return orderCache;
 };
 
+export const getCachedOrder = (): string[] | null => orderCache;
+
 export const saveCategoryOrder = async (order: string[]): Promise<void> => {
+    orderCache = order;
     await DataStore.set(CATEGORY_ORDER_KEY, order);
 };
 
 export const renameCategoryOrder = async (oldName: string, newName: string): Promise<void> => {
-    await DataStore.update<string[]>(CATEGORY_ORDER_KEY, (order = []) =>
-        order.map(name => name === oldName ? newName : name)
-    );
+    await saveCategoryOrder((await getCategoryOrder()).map(name => name === oldName ? newName : name));
 };
 
 export const pruneCategoryOrder = async (existingNames: string[]): Promise<void> => {
     const names = new Set(existingNames);
-    await DataStore.update<string[]>(CATEGORY_ORDER_KEY, (order = []) =>
-        order.filter(name => names.has(name))
-    );
+    await saveCategoryOrder((await getCategoryOrder()).filter(name => names.has(name)));
 };
 
 export const applyCategoryOrder = (categories: StickerCategory[], customOrder: string[]): StickerCategory[] => {
@@ -760,7 +838,7 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
             }
             await DataStore.setMany(stickerEntries);
 
-            await DataStore.update<StickerCategory[]>(LIBRARY_KEY, (existingData = []) => {
+            await updateLibrary(existingData => {
                 const result = [...existingData];
                 for (const importedCategory of importedCategories) {
                     const existingCategory = result.find(c => c.name === importedCategory.name);
@@ -782,10 +860,7 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
                     .filter((id): id is string => id !== undefined);
 
                 if (newFavoriteIds.length > 0) {
-                    await DataStore.update<string[]>(FAVORITES_KEY, (existingFavorites = []) => {
-                        const combined = new Set([...existingFavorites, ...newFavoriteIds]);
-                        return Array.from(combined);
-                    });
+                    await saveFavorites([...new Set([...await getFavorites(), ...newFavoriteIds])]);
                 }
             }
 
@@ -856,7 +931,7 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
 
 export const exportStickers = async (categoryNames?: string[]): Promise<void> => {
     try {
-        const allCategories = (await DataStore.get<StickerCategory[]>(LIBRARY_KEY)) ?? [];
+        const allCategories = await getLibrary();
         const categories = categoryNames
             ? allCategories.filter(c => categoryNames.includes(c.name))
             : allCategories;
