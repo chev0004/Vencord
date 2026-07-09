@@ -14,6 +14,7 @@ import { Logger } from "@utils/Logger";
 import { ModalCloseButton, ModalContent, ModalHeader, type ModalProps, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import definePlugin, { OptionType } from "@utils/types";
 import { chooseFile, saveFile } from "@utils/web";
+import type { Channel } from "@vencord/discord-types";
 import { Alerts, ChannelStore, React, Toasts, UserStore, Checkbox, ScrollerThin, SelectedChannelStore } from "@webpack/common";
 import { Heading } from "@components/index";
 import { nanoid } from "nanoid";
@@ -1105,27 +1106,26 @@ const UnlimitedStickerIcon = ({
     );
 };
 
+const openPickerIfNitro = (channel: Channel) => {
+    if (UserStore.getCurrentUser()?.premiumType) {
+        openStickerPicker(channel);
+    } else {
+        Toasts.show({
+            message: getPluginIntlMessage("NITRO_REQUIRED_BODY"),
+            id: Toasts.genId(),
+            type: Toasts.Type.FAILURE,
+        });
+    }
+};
+
 export const UnlimitedStickersChatBarIcon: ChatBarButtonFactory = (props) => {
     const channel = ChannelStore.getChannel(props.channel.id);
     if (!channel || props.disabled) return null;
 
-    const handleButtonClick = () => {
-        const currentUser = UserStore.getCurrentUser();
-        if (currentUser?.premiumType != null) {
-            openStickerPicker(channel);
-        } else {
-            Toasts.show({
-                message: getPluginIntlMessage("NITRO_REQUIRED_BODY"),
-                id: Toasts.genId(),
-                type: Toasts.Type.FAILURE,
-            });
-        }
-    };
-
     return (
         <ChatBarButton
             tooltip={getPluginIntlMessage("OPEN_LOCAL_STICKER_PICKER")}
-            onClick={handleButtonClick}
+            onClick={() => openPickerIfNitro(channel)}
         >
             <UnlimitedStickerIcon width={20} height={20} />
         </ChatBarButton>
@@ -1144,7 +1144,6 @@ export default definePlugin({
     },
 
     onKey(e: KeyboardEvent) {
-        // Ctrl+Alt+S to open unlimited stickers modal
         if ((e.ctrlKey || (e.metaKey && IS_MAC)) && e.altKey && (e.key === "s" || e.key === "S")) {
             e.preventDefault();
             const channelId = SelectedChannelStore.getChannelId();
@@ -1153,16 +1152,7 @@ export default definePlugin({
             const channel = ChannelStore.getChannel(channelId);
             if (!channel) return;
 
-            const currentUser = UserStore.getCurrentUser();
-            if (currentUser?.premiumType != null) {
-                openStickerPicker(channel);
-            } else {
-                Toasts.show({
-                    message: "This plugin requires a Discord Nitro subscription to upload and send stickers.",
-                    id: Toasts.genId(),
-                    type: Toasts.Type.FAILURE,
-                });
-            }
+            openPickerIfNitro(channel);
         }
     },
 
