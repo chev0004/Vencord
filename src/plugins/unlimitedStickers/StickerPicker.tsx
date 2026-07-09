@@ -92,6 +92,18 @@ const unobserveStickerLoad = (el: Element) => {
     stickerLoadObserver?.unobserve(el);
 };
 
+const GRID_CELL_SIZE = 80;
+const GRID_GAP = 10;
+const GRID_PADDING = 10;
+
+const estimateGridHeight = (count: number, containerWidth: number) => {
+    const columns = containerWidth > 0
+        ? Math.max(1, Math.floor((containerWidth - GRID_PADDING + GRID_GAP) / (GRID_CELL_SIZE + GRID_GAP)))
+        : 5;
+    const rows = Math.max(1, Math.ceil(count / columns));
+    return rows * GRID_CELL_SIZE + (rows - 1) * GRID_GAP + GRID_PADDING;
+};
+
 const ChevronIcon: React.FC<{
     className?: string;
     width?: number;
@@ -688,8 +700,13 @@ const StickerCategoryWrapper: React.FC<StickerCategoryWrapperProps> = ({
     const [isContentLoaded, setIsContentLoaded] =
         React.useState(isInitiallyLoaded);
     const [isDragOver, setIsDragOver] = React.useState(false);
+    const [containerWidth, setContainerWidth] = React.useState(0);
     const categoryRef = React.useRef<HTMLDivElement>(null);
     const isInitialMount = React.useRef(true);
+
+    React.useLayoutEffect(() => {
+        if (categoryRef.current) setContainerWidth(categoryRef.current.clientWidth);
+    }, []);
 
     const handleToggleExpanded = React.useCallback(
         () => setIsExpanded(prev => !prev),
@@ -796,12 +813,11 @@ const StickerCategoryWrapper: React.FC<StickerCategoryWrapperProps> = ({
             ([entry]) => {
                 if (entry.isIntersecting && !isClosing) {
                     setIsContentLoaded(true);
-                    setIsExpanded(true);
                     observer.disconnect();
                     observerRef.current = null;
                 }
             },
-            { rootMargin: "100px" },
+            { rootMargin: "400px" },
         );
         observerRef.current = observer;
         observer.observe(categoryRef.current);
@@ -843,6 +859,12 @@ const StickerCategoryWrapper: React.FC<StickerCategoryWrapperProps> = ({
                     height={20}
                 />
             </div>
+            {isExpanded && !isClosing && !isContentLoaded && (
+                <div
+                    aria-hidden="true"
+                    style={{ height: estimateGridHeight(files.length, containerWidth) }}
+                />
+            )}
             {isExpanded && isContentLoaded && !isClosing && (
                 <div
                     className="unlimited-stickers-grid"
@@ -1351,7 +1373,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
                             key={category.name}
                             categoryName={category.name}
                             files={category.files}
-                            initialIsExpanded={isSearching ? true : index === 0}
+                            initialIsExpanded
                             isInitiallyLoaded={isSearching || index === 0}
                             categoryIndex={index}
                             isDraggable={!isSearching}
