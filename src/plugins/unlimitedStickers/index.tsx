@@ -8,6 +8,7 @@ import { ChatBarButton, type ChatBarButtonFactory } from "@api/ChatButtons";
 import * as DataStore from "@api/DataStore";
 import { definePluginSettings } from "@api/Settings";
 import { Button } from "@components/Button";
+import { Heading } from "@components/index";
 import { Paragraph } from "@components/Paragraph";
 import { Devs, IS_MAC } from "@utils/constants";
 import { Logger } from "@utils/Logger";
@@ -16,8 +17,7 @@ import { ModalCloseButton, ModalContent, ModalHeader, type ModalProps, ModalRoot
 import definePlugin, { OptionType } from "@utils/types";
 import { chooseFile, saveFile } from "@utils/web";
 import type { Channel } from "@vencord/discord-types";
-import { Alerts, ChannelStore, React, Toasts, UserStore, Checkbox, ScrollerThin, SelectedChannelStore } from "@webpack/common";
-import { Heading } from "@components/index";
+import { Alerts, ChannelStore, Checkbox, React, ScrollerThin, SelectedChannelStore, Toasts, UserStore } from "@webpack/common";
 import { nanoid } from "nanoid";
 
 import { getPluginIntlMessage } from "./intl";
@@ -289,7 +289,7 @@ const StickerManagementSetting: React.FC = () => {
     };
 
     const handleFolderUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const files = event.target.files;
+        const { files } = event.target;
         if (!files || files.length === 0) return;
 
         Toasts.show({ message: `Processing ${files.length} files...`, id: Toasts.genId(), type: Toasts.Type.MESSAGE });
@@ -299,7 +299,7 @@ const StickerManagementSetting: React.FC = () => {
             if (!/\.(png|apng|gif|jpe?g)$/i.test(file.name)) continue;
 
             const path = (file as FileWithRelativePath).webkitRelativePath;
-            const parts = path.split('/');
+            const parts = path.split("/");
             const dirName = parts.length > 1 ? parts[parts.length - 2] : "Uploaded Stickers";
 
             let dirFiles = filesByDir.get(dirName);
@@ -433,7 +433,7 @@ const StickerManagementSetting: React.FC = () => {
     const inputProps: DirectoryInputProps = {
         type: "file",
         webkitdirectory: "",
-        style: { display: 'none' },
+        style: { display: "none" },
         onChange: handleFolderUpload,
     };
 
@@ -805,7 +805,7 @@ export const exportStickers = async (categoryNames?: string[]): Promise<void> =>
 
         const json = JSON.stringify(exportData, null, 2);
         const data = new TextEncoder().encode(json);
-        const filename = `unlimited-stickers-export-${new Date().toISOString().split('T')[0]}.json`;
+        const filename = `unlimited-stickers-export-${new Date().toISOString().split("T")[0]}.json`;
 
         if (IS_DISCORD_DESKTOP) {
             await DiscordNative.fileManager.saveWithDialog(data, filename);
@@ -905,10 +905,10 @@ const UnlimitedStickerIcon = ({
                     fill="currentColor"
                     d="M-5.5-2a1.5 1.5 0 1 0-.001-3.001A1.5 1.5 0 0 0-5.5-2M7-3.5a1.5 1.5 0 1 1-3.001-.001A1.5 1.5 0 0 1 7-3.5M-2.911-.556A1.001 1.001 0 0 0-4.573.556 5.5 5.5 0 0 0 0 3 5.5 5.5 0 0 0 4.573.556 1 1 0 1 0 2.911-.556 3.5 3.5 0 0 1 0 1 3.5 3.5 0 0 1-2.911-.556"
                     transform="matrix(25 0 0 25 300 300)"
-                    style={{ display: 'block' }}
+                    style={{ display: "block" }}
                     id="b"
                 />
-                <mask id="e" style={{ maskType: 'alpha' }}>
+                <mask id="e" style={{ maskType: "alpha" }}>
                     <g filter="url(#a)">
                         <path fill="#fff" opacity="0" d="M0 0h600v600H0z" />
                         <use href="#b" />
@@ -916,8 +916,8 @@ const UnlimitedStickerIcon = ({
                 </mask>
             </defs>
             <g clipPath="url(#c)">
-                <g clipPath="url(#d)" transform="rotate(.012) scale(.04)" style={{ display: 'block' }}>
-                    <g mask="url(#e)" style={{ display: 'block' }}>
+                <g clipPath="url(#d)" transform="rotate(.012) scale(.04)" style={{ display: "block" }}>
+                    <g mask="url(#e)" style={{ display: "block" }}>
                         <path
                             fill="currentColor"
                             d="M150 50h300a100 100 0 0 1 100 100v187.5a12.5 12.5 0 0 1-12.5 12.5H475a125 125 0 0 0-125 125v62.5a12.5 12.5 0 0 1-12.5 12.5H150A100 100 0 0 1 50 450V150A100 100 0 0 1 150 50"
@@ -947,7 +947,7 @@ const openPickerIfNitro = (channel: Channel) => {
     }
 };
 
-export const UnlimitedStickersChatBarIcon: ChatBarButtonFactory = (props) => {
+export const UnlimitedStickersChatBarIcon: ChatBarButtonFactory = props => {
     const channel = ChannelStore.getChannel(props.channel.id);
     if (!channel || props.disabled) return null;
 

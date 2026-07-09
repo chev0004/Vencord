@@ -5,6 +5,7 @@
  */
 
 import { findByPropsLazy } from "@webpack";
+
 import { translations } from "./i18n";
 
 const i18nModule = findByPropsLazy("getLocale", "Messages");

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import "./styles.css";
+
 import * as DataStore from "@api/DataStore";
 import { DeleteIcon } from "@components/Icons";
 import { Divider, Heading } from "@components/index";
@@ -26,6 +28,7 @@ import {
     Button,
     Clickable,
     ContextMenuApi,
+    FluxDispatcher,
     Forms,
     GuildStore,
     Menu,
@@ -36,32 +39,30 @@ import {
     TextInput,
     Toasts,
     Tooltip,
-    FluxDispatcher,
     UserStore,
 } from "@webpack/common";
-import "./styles.css";
 
 import {
     addRecentSticker,
+    applyCategoryOrder,
     FAVORITES_EXPANDED_KEY,
+    getCategoryOrder,
     getFavorites,
-    getStickerBlob,
     getRecentStickers,
+    getStickerBlob,
     LIBRARY_KEY,
+    pruneCategoryOrder,
     RECENT_EXPANDED_KEY,
     RECENT_KEY,
     RECENT_LIMIT,
-    STICKER_DATA_KEY_PREFIX,
-    type StickerCategory,
-    type StickerFile,
+    renameCategoryOrder,
+    saveCategoryOrder,
     saveExpansionState,
     saveFavorites,
     settings,
-    getCategoryOrder,
-    saveCategoryOrder,
-    renameCategoryOrder,
-    pruneCategoryOrder,
-    applyCategoryOrder,
+    STICKER_DATA_KEY_PREFIX,
+    type StickerCategory,
+    type StickerFile,
 } from "./index";
 import { getPluginIntlMessage } from "./intl";
 
@@ -283,7 +284,7 @@ const RenameModal: React.FC<{
                     value={value}
                     onChange={handleChange}
                     autoFocus
-                    onKeyDown={(e) => {
+                    onKeyDown={e => {
                         if (e.key === "Enter") {
                             handleSave();
                         }
@@ -499,7 +500,7 @@ const StickerGridItem: React.FC<{
                                 <RenameModal
                                     {...props}
                                     currentName={file.name}
-                                    onSave={(newName) => onStickerRename(file.id, newName)}
+                                    onSave={newName => onStickerRename(file.id, newName)}
                                     type="sticker"
                                 />
                             ));
@@ -559,7 +560,7 @@ const StickerGridItem: React.FC<{
 
         return (
             <Tooltip text={showTooltip ? tooltipContent : ""} tooltipClassName="unlimited-stickers-tooltip">
-                {(props) => (
+                {props => (
                     <div ref={itemRef}>
                         <div
                             {...props}
@@ -589,7 +590,7 @@ const StickerGridItem: React.FC<{
                                     alt={file.name}
                                     className="unlimited-stickers-grid-item-img"
                                     loading="lazy"
-                                    onLoad={(e) => e.currentTarget.classList.add("loaded")}
+                                    onLoad={e => e.currentTarget.classList.add("loaded")}
                                 />
                             )}
                             {imageUrl && !isSending && (
@@ -600,7 +601,7 @@ const StickerGridItem: React.FC<{
                                             : getPluginIntlMessage("ADD_TO_FAVORITES")
                                     }
                                 >
-                                    {(props) => (
+                                    {props => (
                                         <Clickable
                                             {...props}
                                             onClick={handleFavoriteToggle}
@@ -687,7 +688,7 @@ const StickerCategoryWrapper: React.FC<StickerCategoryWrapperProps> = ({
     const isInitialMount = React.useRef(true);
 
     const handleToggleExpanded = React.useCallback(
-        () => setIsExpanded((prev) => !prev),
+        () => setIsExpanded(prev => !prev),
         [],
     );
 
@@ -758,7 +759,7 @@ const StickerCategoryWrapper: React.FC<StickerCategoryWrapperProps> = ({
                             <RenameModal
                                 {...props}
                                 currentName={categoryName}
-                                onSave={(newName) => onCategoryRename(categoryName, newName)}
+                                onSave={newName => onCategoryRename(categoryName, newName)}
                                 type="category"
                             />
                         ));
@@ -1013,8 +1014,8 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
     const handleStickerSent = React.useCallback(async (file: StickerFile) => {
         if (isClosing) return;
         await addRecentSticker(file.id);
-        setRecentIds((prev) =>
-            [file.id, ...prev.filter((id) => id !== file.id)].slice(0, RECENT_LIMIT),
+        setRecentIds(prev =>
+            [file.id, ...prev.filter(id => id !== file.id)].slice(0, RECENT_LIMIT),
         );
     }, [isClosing]);
 
@@ -1226,16 +1227,16 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
                     filteredLocalCategories: allCategories,
                 };
             const lowerQuery = searchQuery.toLowerCase();
-            const filteredFav = favoriteFiles.filter((f) =>
+            const filteredFav = favoriteFiles.filter(f =>
                 f.name.toLowerCase().includes(lowerQuery),
             );
-            const filteredRec = recentFiles.filter((f) =>
+            const filteredRec = recentFiles.filter(f =>
                 f.name.toLowerCase().includes(lowerQuery),
             );
             const filteredCat = allCategories
-                .map((cat) => {
+                .map(cat => {
                     if (cat.name.toLowerCase().includes(lowerQuery)) return cat;
-                    const matchingFiles = cat.files.filter((f) =>
+                    const matchingFiles = cat.files.filter(f =>
                         f.name.toLowerCase().includes(lowerQuery),
                     );
                     return matchingFiles.length > 0
@@ -1322,7 +1323,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
                             storageKey={FAVORITES_EXPANDED_KEY}
                             isInitiallyLoaded={true}
                             stickerDragCategoryId={!isSearching ? FAVORITES_CATEGORY_ID : undefined}
-                            getLibraryCategoryForFile={(file) =>
+                            getLibraryCategoryForFile={file =>
                                 allCategories.find(cat => cat.files.some(f => f.id === file.id))?.name
                             }
                             {...commonProps}
@@ -1386,12 +1387,12 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
                     <Divider style={{ margin: "8px 0 8px" }} />
                 </>
             )}
-            <ModalContent style={{ padding: '0' }}>{renderContent()}</ModalContent>
+            <ModalContent style={{ padding: "0" }}>{renderContent()}</ModalContent>
         </ModalRoot>
     );
 };
 
 export const openStickerPicker = (channel: Channel) =>
-    openModal((props) => (
+    openModal(props => (
         <StickerPickerModal rootProps={props} channel={channel} />
     ));
