@@ -37,6 +37,7 @@ import {
     Toasts,
     Tooltip,
     FluxDispatcher,
+    UserStore,
 } from "@webpack/common";
 import "./styles.css";
 
@@ -106,28 +107,54 @@ const StarIcon: React.FC<{
     </svg>
 );
 
+const getAccountGuildEntry = () => {
+    const userId = UserStore.getCurrentUser()?.id;
+    if (!userId) return null;
+    settings.store.accountGuilds ??= {};
+    return settings.store.accountGuilds[userId] ?? null;
+};
+
 const ensureStickerGuild = async (): Promise<string | null> => {
-    let guildId = settings.store.stickerGuildId;
-    if (guildId && GuildStore.getGuild(guildId)) return guildId;
+    const userId = UserStore.getCurrentUser()?.id;
+    if (!userId) return null;
+
+    settings.store.accountGuilds ??= {};
+    const entry = settings.store.accountGuilds[userId];
+    if (entry && GuildStore.getGuild(entry.guildId)) return entry.guildId;
+
+    const legacyId = settings.store.stickerGuildId;
+    if (legacyId && GuildStore.getGuild(legacyId)) {
+        settings.store.accountGuilds[userId] = { guildId: legacyId, slotId: settings.store.stickerSlotId ?? null };
+        return legacyId;
+    }
+
+    const guildName = getPluginIntlMessage("STICKER_GUILD_NAME");
+    const ownedGuild = Object.values(GuildStore.getGuilds()).find(
+        g => g.ownerId === userId && g.name === guildName
+    );
+    if (ownedGuild) {
+        settings.store.accountGuilds[userId] = { guildId: ownedGuild.id, slotId: null };
+        return ownedGuild.id;
+    }
+
     try {
         const newGuild = await RestAPI.post({
             url: "/guilds",
             body: {
-                name: getPluginIntlMessage("STICKER_GUILD_NAME"),
+                name: guildName,
                 icon: null,
                 channels: [],
             },
         });
 
-        guildId = newGuild.body.id;
-        settings.store.stickerGuildId = guildId;
+        settings.store.accountGuilds[userId] = { guildId: newGuild.body.id, slotId: null };
 
         Alerts.show({
             title: getPluginIntlMessage("STICKER_GUILD_CREATED_TITLE"),
             body: getPluginIntlMessage("STICKER_GUILD_CREATED_BODY"),
             confirmText: getIntlMessage("GOT_IT"),
         });
-        return guildId;
+        return newGuild.body.id;
     } catch (error) {
         logger.error(
             `Failed to create 'Vencord Local Stickers' ${getIntlMessage("GUILD").toLowerCase()}:`,
@@ -146,7 +173,8 @@ const uploadAndReplaceSticker = async (
     stickerName: string,
     base64File: string,
 ): Promise<string | null> => {
-    const currentStickerId = settings.store.stickerSlotId;
+    const entry = getAccountGuildEntry();
+    const currentStickerId = entry?.slotId;
     if (currentStickerId) {
         try {
             await RestAPI.del({
@@ -178,7 +206,7 @@ const uploadAndReplaceSticker = async (
             url: `/guilds/${guildId}/stickers`,
             body: formData,
         });
-        settings.store.stickerSlotId = newSticker.body.id;
+        if (entry) entry.slotId = newSticker.body.id;
         return newSticker.body.id;
     } catch (error) {
         logger.error("Failed to upload new sticker:", error);

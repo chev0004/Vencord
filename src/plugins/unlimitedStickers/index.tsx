@@ -491,6 +491,7 @@ export const settings = definePluginSettings({
 }).withPrivateSettings<{
     stickerGuildId: string | null;
     stickerSlotId: string | null;
+    accountGuilds: Record<string, { guildId: string; slotId: string | null; }>;
 }>();
 
 export const getFavorites = async (): Promise<string[]> => {
