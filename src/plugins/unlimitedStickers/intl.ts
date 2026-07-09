@@ -13,7 +13,10 @@ type TranslationKey = keyof typeof translations["en"];
 type AvailableLocales = keyof typeof translations;
 
 export const getPluginIntlMessage = (key: TranslationKey): string => {
-    const locale = i18nModule.getLocale();
-    const availableTranslations = translations[locale as AvailableLocales];
-    return availableTranslations?.[key] ?? translations.en[key] ?? key;
+    try {
+        const locale = i18nModule.getLocale() as AvailableLocales;
+        return translations[locale]?.[key] ?? translations.en[key] ?? key;
+    } catch {
+        return translations.en[key] ?? key;
+    }
 };
