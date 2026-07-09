@@ -31,6 +31,9 @@ export const FAVORITES_EXPANDED_KEY = "UnlimitedStickers_FavoritesExpanded";
 export const RECENT_EXPANDED_KEY = "UnlimitedStickers_RecentExpanded";
 export const CATEGORY_ORDER_KEY = "UnlimitedStickers_CategoryOrder";
 
+const STICKER_MAX_BYTES = 512 * 1024;
+const STICKER_MAX_DIMENSION = 320;
+
 const logger = new Logger("UnlimitedStickers");
 
 export const getStickerBlob = async (id: string): Promise<Blob | null> => {
@@ -49,6 +52,27 @@ const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
 });
+
+const normalizeSticker = async (file: File): Promise<Blob | null> => {
+    if (/\.(gif|apng)$/i.test(file.name)) {
+        return file.size <= STICKER_MAX_BYTES ? file : null;
+    }
+
+    try {
+        const bitmap = await createImageBitmap(file);
+        const scale = Math.min(1, STICKER_MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
+        if (scale === 1 && file.type === "image/png" && file.size <= STICKER_MAX_BYTES) return file;
+
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/png"));
+        return blob && blob.size <= STICKER_MAX_BYTES ? blob : null;
+    } catch {
+        return null;
+    }
+};
 
 export interface StickerFile {
     id: string;
@@ -317,17 +341,36 @@ const StickerManagementSetting: React.FC = () => {
 
         const newCategories: StickerCategory[] = [];
         const stickerDataToSave: [string, Blob][] = [];
+        const skipped: string[] = [];
 
         for (const [categoryName, categoryFiles] of filesByDir.entries()) {
-            const stickerFiles = categoryFiles.map(file => {
+            const stickerFiles: StickerFile[] = [];
+            for (const file of categoryFiles) {
+                const blob = await normalizeSticker(file);
+                if (!blob) {
+                    skipped.push(file.name);
+                    continue;
+                }
                 const newId = nanoid();
-                stickerDataToSave.push([`${STICKER_DATA_KEY_PREFIX}${newId}`, file]);
-                return {
-                    id: newId,
-                    name: file.name.replace(/\.[^/.]+$/, ""),
-                };
+                stickerDataToSave.push([`${STICKER_DATA_KEY_PREFIX}${newId}`, blob]);
+                stickerFiles.push({ id: newId, name: file.name.replace(/\.[^/.]+$/, "") });
+            }
+            if (stickerFiles.length > 0) {
+                newCategories.push({ name: categoryName, files: stickerFiles });
+            }
+        }
+
+        if (skipped.length > 0) {
+            Toasts.show({
+                message: `Skipped ${skipped.length} file${skipped.length === 1 ? "" : "s"} (unreadable or over 512KB): ${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "…" : ""}`,
+                type: Toasts.Type.FAILURE,
+                id: Toasts.genId(),
             });
-            newCategories.push({ name: categoryName, files: stickerFiles });
+        }
+
+        if (stickerDataToSave.length === 0) {
+            if (event.target) event.target.value = "";
+            return;
         }
 
         await DataStore.setMany(stickerDataToSave);
