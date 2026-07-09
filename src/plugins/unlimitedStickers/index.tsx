@@ -11,6 +11,7 @@ import { Button } from "@components/Button";
 import { Paragraph } from "@components/Paragraph";
 import { Devs, IS_MAC } from "@utils/constants";
 import { Logger } from "@utils/Logger";
+import { classes } from "@utils/misc";
 import { ModalCloseButton, ModalContent, ModalHeader, type ModalProps, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import definePlugin, { OptionType } from "@utils/types";
 import { chooseFile, saveFile } from "@utils/web";
@@ -190,16 +191,16 @@ const ReorderCategoriesModal: React.FC<ReorderCategoriesModalProps> = ({ onClose
     return (
         <ModalRoot transitionState={transitionState} size={ModalSize.MEDIUM}>
             <ModalHeader>
-                <Heading tag="h2" style={{ flexGrow: 1 }}>
+                <Heading tag="h2" className="unlimited-stickers-modal-title">
                     Reorder Categories
                 </Heading>
                 <ModalCloseButton onClick={onClose} />
             </ModalHeader>
             <ModalContent>
-                <Paragraph style={{ marginBottom: "16px", color: "var(--text-muted)", fontSize: "14px", lineHeight: "1.5" }}>
+                <Paragraph className="unlimited-stickers-reorder-hint">
                     Drag and drop to reorder your sticker categories. This order will be used in the sticker picker.
                 </Paragraph>
-                <ScrollerThin style={{ maxHeight: "400px", paddingRight: "8px" }}>
+                <ScrollerThin className="unlimited-stickers-reorder-list">
                     {orderedCategories.map((category, index) => (
                         <div
                             key={category.name}
@@ -207,52 +208,27 @@ const ReorderCategoriesModal: React.FC<ReorderCategoriesModalProps> = ({ onClose
                             onDragStart={handleDragStart(index)}
                             onDragOver={handleDragOver(index)}
                             onDragEnd={handleDragEnd}
-                            style={{
-                                padding: "12px 16px",
-                                marginBottom: "8px",
-                                backgroundColor: draggedIndex === index ? "var(--brand-experiment-560)" : "var(--background-secondary)",
-                                border: draggedIndex === index ? "2px solid var(--brand-experiment)" : "2px solid var(--background-tertiary)",
-                                borderRadius: "8px",
-                                cursor: draggedIndex === index ? "grabbing" : "grab",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "12px",
-                                transition: "all 0.2s ease",
-                                userSelect: "none",
-                                boxShadow: draggedIndex === index ? "0 4px 12px rgba(0, 0, 0, 0.3)" : "0 1px 3px rgba(0, 0, 0, 0.1)",
-                                transform: draggedIndex === index ? "scale(1.02)" : "scale(1)",
-                            }}
-                            onMouseEnter={(e) => {
-                                if (draggedIndex !== index) {
-                                    e.currentTarget.style.backgroundColor = "var(--background-modifier-hover)";
-                                    e.currentTarget.style.borderColor = "var(--background-modifier-accent)";
-                                }
-                            }}
-                            onMouseLeave={(e) => {
-                                if (draggedIndex !== index) {
-                                    e.currentTarget.style.backgroundColor = "var(--background-secondary)";
-                                    e.currentTarget.style.borderColor = "var(--background-tertiary)";
-                                }
-                            }}
+                            className={classes(
+                                "unlimited-stickers-reorder-item",
+                                draggedIndex === index && "unlimited-stickers-reorder-item--dragging",
+                            )}
                         >
-                            <div style={{ color: "var(--interactive-normal)", flexShrink: 0, display: "flex", alignItems: "center" }}>
-                                <ReorderIcon width={20} height={20} />
-                            </div>
-                            <span style={{ flexGrow: 1, color: "var(--header-primary)", fontWeight: 500, fontSize: "14px" }}>
+                            <ReorderIcon width={20} height={20} />
+                            <span className="unlimited-stickers-reorder-item-name">
                                 {category.name}
                             </span>
-                            <span style={{ color: "var(--text-muted)", fontSize: "12px", flexShrink: 0 }}>
+                            <span className="unlimited-stickers-reorder-item-count">
                                 {category.files.length} sticker{category.files.length === 1 ? "" : "s"}
                             </span>
                         </div>
                     ))}
                 </ScrollerThin>
             </ModalContent>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", padding: "16px" }}>
+            <div className="unlimited-stickers-modal-footer unlimited-stickers-modal-footer--split">
                 <Button onClick={handleReset} size="small" variant="secondary">
                     Reset to Alphabetical
                 </Button>
-                <div style={{ display: "flex", gap: "8px" }}>
+                <div className="unlimited-stickers-button-row">
                     <Button onClick={onClose} size="small" variant="secondary">
                         Cancel
                     </Button>
@@ -464,7 +440,7 @@ const StickerManagementSetting: React.FC = () => {
     return (
         <div>
             <input ref={fileInputRef} {...inputProps} />
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: '16px' }}>
+            <div className="unlimited-stickers-manage-buttons">
                 <Button onClick={() => fileInputRef.current?.click()} size="small">
                     Upload Sticker Folder(s)
                 </Button>
@@ -491,7 +467,7 @@ const StickerManagementSetting: React.FC = () => {
                 </Button>
             </div>
             {!loading && categories.length > 0 && (
-                <div style={{ display: "flex", gap: "8px", marginBottom: "8px", alignItems: "center" }}>
+                <div className="unlimited-stickers-selection-buttons">
                     <Button onClick={handleSelectAll} size="small" variant="secondary">
                         Select All
                     </Button>
@@ -503,11 +479,11 @@ const StickerManagementSetting: React.FC = () => {
             {loading ? (
                 <Paragraph>Loading categories...</Paragraph>
             ) : categories.length > 0 ? (
-                <ScrollerThin style={{ maxHeight: "40vh" }}>
+                <ScrollerThin className="unlimited-stickers-manage-list">
                     {categories.map(category => (
-                        <div key={category.name} style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
+                        <div key={category.name} className="unlimited-stickers-manage-row">
                             <Checkbox value={selectedCategories.has(category.name)} onChange={() => handleSelectionChange(category.name)} />
-                            <span style={{ marginLeft: '8px', flexGrow: 1, color: 'var(--text-muted)' }}>{category.name} ({category.files.length} stickers)</span>
+                            <span>{category.name} ({category.files.length} stickers)</span>
                             <Button size="min" variant="dangerSecondary" onClick={() => Alerts.show({
                                 title: `Delete ${category.name}`,
                                 body: `Are you sure you want to delete the "${category.name}" category and all its stickers? This cannot be undone.`,
@@ -746,14 +722,14 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
     return (
         <ModalRoot transitionState={transitionState} size={ModalSize.MEDIUM}>
             <ModalHeader>
-                <Heading tag="h2" style={{ flexGrow: 1 }}>
+                <Heading tag="h2" className="unlimited-stickers-modal-title">
                     Select Categories to Import
                 </Heading>
                 <ModalCloseButton onClick={onClose} />
             </ModalHeader>
             <ModalContent>
-                <div style={{ padding: "8px 0" }}>
-                    <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+                <div className="unlimited-stickers-import-wrapper">
+                    <div className="unlimited-stickers-selection-buttons">
                         <Button onClick={handleSelectAll} size="small" variant="secondary">
                             Select All
                         </Button>
@@ -761,14 +737,14 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
                             Deselect All
                         </Button>
                     </div>
-                    <ScrollerThin style={{ maxHeight: "400px" }}>
+                    <ScrollerThin className="unlimited-stickers-import-list">
                         {importData.categories.map(category => (
-                            <div key={category.name} style={{ display: 'flex', alignItems: 'center', padding: '4px 0' }}>
+                            <div key={category.name} className="unlimited-stickers-manage-row unlimited-stickers-manage-row--bright">
                                 <Checkbox
                                     value={selectedCategories.has(category.name)}
                                     onChange={() => handleSelectionChange(category.name)}
                                 />
-                                <span style={{ marginLeft: '8px', flexGrow: 1, color: 'var(--text-normal)' }}>
+                                <span>
                                     {category.name} ({category.files.length} sticker{category.files.length === 1 ? "" : "s"})
                                 </span>
                             </div>
@@ -776,7 +752,7 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
                     </ScrollerThin>
                 </div>
             </ModalContent>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", padding: "16px" }}>
+            <div className="unlimited-stickers-modal-footer">
                 <Button onClick={onClose} size="small" variant="secondary">
                     Cancel
                 </Button>

@@ -263,7 +263,7 @@ const RenameModal: React.FC<{
     return (
         <ModalRoot transitionState={transitionState}>
             <ModalHeader>
-                <Heading tag="h4" style={{ flexGrow: 1 }}>
+                <Heading tag="h4" className="unlimited-stickers-modal-title">
                     {type === "category"
                         ? getPluginIntlMessage("RENAME_CATEGORY")
                         : getPluginIntlMessage("RENAME_STICKER")}
@@ -271,7 +271,7 @@ const RenameModal: React.FC<{
                 <ModalCloseButton onClick={onClose} />
             </ModalHeader>
             <ModalContent>
-                <Forms.FormTitle tag="h5" style={{ marginTop: "10px" }}>
+                <Forms.FormTitle tag="h5" className="unlimited-stickers-rename-label">
                     {getPluginIntlMessage("NEW_NAME")}
                 </Forms.FormTitle>
                 <TextInput
@@ -290,13 +290,13 @@ const RenameModal: React.FC<{
                     }}
                 />
                 {error && (
-                    <div style={{ color: "var(--status-danger)", fontSize: "12px", marginTop: "4px", marginBottom: "10px" }}>
+                    <div className="unlimited-stickers-rename-error">
                         {error}
                     </div>
                 )}
             </ModalContent>
             <ModalFooter>
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", width: "100%" }}>
+                <div className="unlimited-stickers-actions">
                     <Button
                         color={Button.Colors.PRIMARY}
                         onClick={onClose}
@@ -577,7 +577,6 @@ const StickerGridItem: React.FC<{
                             onDragStart={handleDragStart}
                             onDragEnd={handleDragEnd}
                             onDragOver={handleDragOver}
-                            style={{ cursor: isDraggable ? 'grab' : 'pointer' }}
                         >
                             {isSending && (
                                 <div className="unlimited-stickers-loading-spinner-container">
@@ -826,9 +825,8 @@ const StickerCategoryWrapper: React.FC<StickerCategoryWrapperProps> = ({
                 onClick={handleHeaderClick}
                 onContextMenu={handleContextMenu}
                 aria-expanded={isExpanded}
-                style={{ cursor: 'pointer' }}
             >
-                <Heading tag="h5" style={{ userSelect: 'none' }}>
+                <Heading tag="h5">
                     {categoryName} ({files.length})
                 </Heading>
                 <ChevronIcon
@@ -1259,28 +1257,14 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
 
         if (isLoading)
             return (
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '400px' }}>
+                <div className="unlimited-stickers-loading">
                     <Spinner type={Spinner.Type.WANDERING_CUBES} />
                 </div>
             );
         if (!guildId)
             return (
-                <div style={{
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    minHeight: '300px',
-                    padding: '20px'
-                }}>
-                    <p style={{
-                        textAlign: "center",
-                        color: 'var(--text-muted)',
-                        fontSize: '14px',
-                        lineHeight: '1.5',
-                        maxWidth: '400px'
-                    }}>
-                        {getPluginIntlMessage("STICKER_GUILD_CREATE_FAILED_BODY")}
-                    </p>
+                <div className="unlimited-stickers-empty-state">
+                    <p>{getPluginIntlMessage("STICKER_GUILD_CREATE_FAILED_BODY")}</p>
                 </div>
             );
         const noResults =
@@ -1289,20 +1273,8 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
             filteredRecents.length === 0;
         if (noResults)
             return (
-                <div style={{
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    minHeight: '300px',
-                    padding: '20px'
-                }}>
-                    <p style={{
-                        textAlign: "center",
-                        color: 'var(--text-muted)',
-                        fontSize: '14px',
-                        lineHeight: '1.5',
-                        maxWidth: '400px'
-                    }}>
+                <div className="unlimited-stickers-empty-state">
+                    <p>
                         {searchQuery
                             ? getPluginIntlMessage("NO_STICKERS_FOUND_QUERY").replace(
                                 "{query}",
@@ -1396,14 +1368,14 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
     return (
         <ModalRoot {...rootProps}>
             <ModalHeader>
-                <Heading tag="h2" style={{ flexGrow: 1, margin: 0 }}>
+                <Heading tag="h2" className="unlimited-stickers-modal-title">
                     {getPluginIntlMessage("STICKERS")}
                 </Heading>
                 <ModalCloseButton onClick={rootProps.onClose} />
             </ModalHeader>
             {!isLoading && !isClosing && hasAnyStickers && (
                 <>
-                    <div style={{ padding: "12px 16px 8px 16px" }}>
+                    <div className="unlimited-stickers-search">
                         <TextInput
                             placeholder={getPluginIntlMessage("SEARCH_STICKERS_PLACEHOLDER")}
                             value={searchQuery}

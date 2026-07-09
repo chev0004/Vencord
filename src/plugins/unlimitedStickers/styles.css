@@ -19,6 +19,7 @@
     padding: 4px;
     border-radius: 4px;
     transition: background-color 0.1s ease;
+    cursor: pointer;
 }
 
 .unlimited-stickers-category-header:hover {
@@ -48,6 +49,7 @@
 
 .unlimited-stickers-category-header > h5 {
     margin: 0;
+    user-select: none;
 }
 
 .unlimited-stickers-category-arrow {
@@ -102,7 +104,7 @@
 
 .unlimited-stickers-grid[data-drag-over="true"] {
     background-color: var(--background-modifier-hover);
-    border: 2px dashed var(--brand-experiment);
+    border: 2px dashed var(--brand-500);
 }
 
 .unlimited-stickers-grid--hidden {
@@ -124,6 +126,11 @@
     transition: background-color 0.15s ease, opacity 0.15s ease, transform 0.2s ease;
     overflow: hidden;
     user-select: none;
+    cursor: pointer;
+}
+
+.unlimited-stickers-grid-item[draggable="true"] {
+    cursor: grab;
 }
 
 .unlimited-stickers-grid-item:hover {
@@ -259,4 +266,169 @@
     max-width: 240px;
     word-wrap: break-word;
     font-weight: 500;
+}
+
+.unlimited-stickers-modal-title {
+    flex-grow: 1;
+    margin: 0;
+}
+
+.unlimited-stickers-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 16px;
+}
+
+.unlimited-stickers-modal-footer--split {
+    justify-content: space-between;
+}
+
+.unlimited-stickers-button-row {
+    display: flex;
+    gap: 8px;
+}
+
+.unlimited-stickers-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    width: 100%;
+}
+
+.unlimited-stickers-reorder-hint {
+    margin-bottom: 16px;
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.unlimited-stickers-reorder-list {
+    max-height: 400px;
+    padding-right: 8px;
+}
+
+.unlimited-stickers-reorder-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    background-color: var(--background-secondary);
+    border: 2px solid var(--background-tertiary);
+    border-radius: 8px;
+    cursor: grab;
+    transition: all 0.2s ease;
+    user-select: none;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.unlimited-stickers-reorder-item:hover:not(.unlimited-stickers-reorder-item--dragging) {
+    background-color: var(--background-modifier-hover);
+    border-color: var(--background-modifier-accent);
+}
+
+.unlimited-stickers-reorder-item--dragging {
+    background-color: var(--brand-500);
+    border-color: var(--brand-500);
+    cursor: grabbing;
+    transform: scale(1.02);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.unlimited-stickers-reorder-item svg {
+    flex-shrink: 0;
+    color: var(--interactive-normal);
+}
+
+.unlimited-stickers-reorder-item-name {
+    flex-grow: 1;
+    color: var(--header-primary);
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.unlimited-stickers-reorder-item-count {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.unlimited-stickers-manage-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.unlimited-stickers-selection-buttons {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.unlimited-stickers-manage-list {
+    max-height: 40vh;
+}
+
+.unlimited-stickers-manage-row {
+    display: flex;
+    align-items: center;
+    padding: 4px 0;
+}
+
+.unlimited-stickers-manage-row span {
+    margin-left: 8px;
+    flex-grow: 1;
+    color: var(--text-muted);
+}
+
+.unlimited-stickers-manage-row--bright span {
+    color: var(--text-normal);
+}
+
+.unlimited-stickers-import-wrapper {
+    padding: 8px 0;
+}
+
+.unlimited-stickers-import-list {
+    max-height: 400px;
+}
+
+.unlimited-stickers-rename-label {
+    margin-top: 10px;
+}
+
+.unlimited-stickers-rename-error {
+    color: var(--status-danger);
+    font-size: 12px;
+    margin: 4px 0 10px;
+}
+
+.unlimited-stickers-search {
+    padding: 12px 16px 8px;
+}
+
+.unlimited-stickers-loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 400px;
+}
+
+.unlimited-stickers-empty-state {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 300px;
+    padding: 20px;
+}
+
+.unlimited-stickers-empty-state p {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1.5;
+    max-width: 400px;
+    margin: 0;
 }
