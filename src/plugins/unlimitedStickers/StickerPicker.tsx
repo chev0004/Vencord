@@ -65,6 +65,7 @@ import {
     type StickerFile,
 } from "./index";
 import { getPluginIntlMessage } from "./intl";
+import { getQueryForms, textMatchesForms } from "./search";
 
 const logger = new Logger("UnlimitedStickers");
 const Spinner = findByCodeLazy("wanderingCubes");
@@ -350,6 +351,65 @@ const RenameModal: React.FC<{
     );
 };
 
+const EditTagsModal: React.FC<{
+    currentTags: string[];
+    onSave: (tags: string[]) => void;
+    onClose: () => void;
+    transitionState: number;
+}> = ({ transitionState, onClose, currentTags, onSave }) => {
+    const [value, setValue] = React.useState(currentTags.join(", "));
+
+    const handleSave = () => {
+        const tags = [...new Set(value.split(/[,、]/).map(tag => tag.trim()).filter(Boolean))];
+        onSave(tags);
+        onClose();
+    };
+
+    return (
+        <ModalRoot transitionState={transitionState}>
+            <ModalHeader>
+                <Heading tag="h4" className="unlimited-stickers-modal-title">
+                    {getPluginIntlMessage("EDIT_TAGS")}
+                </Heading>
+                <ModalCloseButton onClick={onClose} />
+            </ModalHeader>
+            <ModalContent>
+                <Forms.FormTitle tag="h5" className="unlimited-stickers-rename-label">
+                    {getPluginIntlMessage("TAGS")}
+                </Forms.FormTitle>
+                <TextInput
+                    style={{ marginBottom: "10px" }}
+                    placeholder={getPluginIntlMessage("TAGS_PLACEHOLDER")}
+                    value={value}
+                    onChange={setValue}
+                    autoFocus
+                    onKeyDown={e => {
+                        if (e.key === "Enter") {
+                            handleSave();
+                        }
+                    }}
+                />
+            </ModalContent>
+            <ModalFooter>
+                <div className="unlimited-stickers-actions">
+                    <Button
+                        color={Button.Colors.PRIMARY}
+                        onClick={onClose}
+                    >
+                        {getPluginIntlMessage("CANCEL")}
+                    </Button>
+                    <Button
+                        color={Button.Colors.BRAND}
+                        onClick={handleSave}
+                    >
+                        {getPluginIntlMessage("SAVE")}
+                    </Button>
+                </div>
+            </ModalFooter>
+        </ModalRoot>
+    );
+};
+
 const StickerGridItem: React.FC<{
     file: StickerFile;
     guildId: string;
@@ -360,6 +420,7 @@ const StickerGridItem: React.FC<{
     onStickerSent: (file: StickerFile) => void;
     onStickerRename: (stickerId: string, newName: string) => Promise<boolean>;
     onStickerDelete: (stickerId: string) => void;
+    onStickerTagsEdit: (stickerId: string, tags: string[]) => void;
     isClosing: boolean;
     categoryName?: string;
     stickerDragCategoryId?: string;
@@ -382,6 +443,7 @@ const StickerGridItem: React.FC<{
     onStickerSent,
     onStickerRename,
     onStickerDelete,
+    onStickerTagsEdit,
     isClosing,
     categoryName,
     stickerDragCategoryId,
@@ -522,6 +584,19 @@ const StickerGridItem: React.FC<{
                             ));
                         }}
                     />
+                    <Menu.MenuItem
+                        id="edit-sticker-tags"
+                        label={getPluginIntlMessage("EDIT_TAGS")}
+                        action={() => {
+                            openModal(props => (
+                                <EditTagsModal
+                                    {...props}
+                                    currentTags={file.tags ?? []}
+                                    onSave={tags => onStickerTagsEdit(file.id, tags)}
+                                />
+                            ));
+                        }}
+                    />
                     {canMove && (
                         <Menu.MenuItem
                             id="move-sticker"
@@ -568,6 +643,11 @@ const StickerGridItem: React.FC<{
                 <div className="unlimited-stickers-tooltip-preview-name">
                     {file.name}
                 </div>
+                {file.tags && file.tags.length > 0 && (
+                    <div className="unlimited-stickers-tooltip-preview-tags">
+                        {file.tags.join(", ")}
+                    </div>
+                )}
             </div>
         ) : file.name;
 
@@ -650,6 +730,7 @@ interface StickerCategoryWrapperProps {
     onCategoryRename: (oldName: string, newName: string) => Promise<boolean>;
     onStickerRename: (stickerId: string, newName: string) => Promise<boolean>;
     onStickerDelete: (stickerId: string) => void;
+    onStickerTagsEdit: (stickerId: string, tags: string[]) => void;
     initialIsExpanded: boolean;
     storageKey?: string;
     isInitiallyLoaded?: boolean;
@@ -1077,6 +1158,19 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
         return true;
     }, [allCategories, isClosing]);
 
+    const handleStickerTagsEdit = React.useCallback(async (stickerId: string, tags: string[]) => {
+        if (isClosing) return;
+
+        const updatedCategories = allCategories.map(cat => ({
+            ...cat,
+            files: cat.files.map(file =>
+                file.id === stickerId ? { ...file, tags: tags.length > 0 ? tags : undefined } : file
+            )
+        }));
+        setAllCategories(updatedCategories);
+        await DataStore.set(LIBRARY_KEY, updatedCategories);
+    }, [allCategories, isClosing]);
+
     const handleStickerDelete = React.useCallback(async (stickerId: string) => {
         if (isClosing) return;
 
@@ -1252,19 +1346,16 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
                     filteredRecents: recentFiles,
                     filteredLocalCategories: allCategories,
                 };
-            const lowerQuery = searchQuery.toLowerCase();
-            const filteredFav = favoriteFiles.filter(f =>
-                f.name.toLowerCase().includes(lowerQuery),
-            );
-            const filteredRec = recentFiles.filter(f =>
-                f.name.toLowerCase().includes(lowerQuery),
-            );
+            const queryForms = getQueryForms(searchQuery);
+            const stickerMatches = (f: StickerFile) =>
+                textMatchesForms(f.name, queryForms) ||
+                (f.tags ?? []).some(tag => textMatchesForms(tag, queryForms));
+            const filteredFav = favoriteFiles.filter(stickerMatches);
+            const filteredRec = recentFiles.filter(stickerMatches);
             const filteredCat = allCategories
                 .map(cat => {
-                    if (cat.name.toLowerCase().includes(lowerQuery)) return cat;
-                    const matchingFiles = cat.files.filter(f =>
-                        f.name.toLowerCase().includes(lowerQuery),
-                    );
+                    if (textMatchesForms(cat.name, queryForms)) return cat;
+                    const matchingFiles = cat.files.filter(stickerMatches);
                     return matchingFiles.length > 0
                         ? { ...cat, files: matchingFiles }
                         : null;
@@ -1324,6 +1415,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
             onCategoryRename: handleCategoryRename,
             onStickerRename: handleStickerRename,
             onStickerDelete: handleStickerDelete,
+            onStickerTagsEdit: handleStickerTagsEdit,
             isClosing,
             onMoveSticker: handleMoveSticker,
             allCategories: allCategoryNames,

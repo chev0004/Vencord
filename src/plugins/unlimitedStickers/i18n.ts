@@ -21,7 +21,7 @@ export const translations = {
         "REMOVE_FROM_FAVORITES": "Remove from favorites",
         "ADD_TO_FAVORITES": "Add to favorites",
         "NO_STICKERS_IN_CATEGORY": "No stickers here yet!",
-        "SEARCH_STICKERS_PLACEHOLDER": "Search stickers by name or category...",
+        "SEARCH_STICKERS_PLACEHOLDER": "Search by name, tag, or category...",
         "NITRO_REQUIRED_BODY": "This plugin requires a Discord Nitro subscription to upload and send stickers.",
         "RENAME": "Rename",
         "RENAME_CATEGORY": "Rename Category",
@@ -35,7 +35,10 @@ export const translations = {
         "CANCEL": "Cancel",
         "MOVE_TO": "Move to",
         "MOVE_STICKER_SUCCESS": "Sticker moved successfully",
-        "STICKER_MOVED_TO_CATEGORY": "Sticker moved to \"{category}\""
+        "STICKER_MOVED_TO_CATEGORY": "Sticker moved to \"{category}\"",
+        "EDIT_TAGS": "Edit Tags",
+        "TAGS": "Tags",
+        "TAGS_PLACEHOLDER": "Comma-separated tags, e.g. なく, cry"
     },
     "ja": {
         "STICKERS": "無限スタンプパネル",
@@ -53,7 +56,7 @@ export const translations = {
         "REMOVE_FROM_FAVORITES": "お気に入りから削除",
         "ADD_TO_FAVORITES": "お気に入りに追加",
         "NO_STICKERS_IN_CATEGORY": "ここにはまだスタンプがありません！",
-        "SEARCH_STICKERS_PLACEHOLDER": "名前またはカテゴリでスタンプを検索...",
+        "SEARCH_STICKERS_PLACEHOLDER": "名前、タグ、カテゴリで検索...",
         "NITRO_REQUIRED_BODY": "このプラグインは、スタンプをアップロードして送信するためにDiscord Nitroのサブスクリプションが必要です。",
         "RENAME": "名前を変更",
         "RENAME_CATEGORY": "カテゴリの名前を変更",
@@ -67,6 +70,9 @@ export const translations = {
         "CANCEL": "キャンセル",
         "MOVE_TO": "移動先",
         "MOVE_STICKER_SUCCESS": "スタンプを移動しました",
-        "STICKER_MOVED_TO_CATEGORY": "スタンプを「{category}」に移動しました"
+        "STICKER_MOVED_TO_CATEGORY": "スタンプを「{category}」に移動しました",
+        "EDIT_TAGS": "タグを編集",
+        "TAGS": "タグ",
+        "TAGS_PLACEHOLDER": "カンマ区切りでタグを入力（例：なく, cry）"
     }
 };

@@ -78,6 +78,7 @@ const normalizeSticker = async (file: File): Promise<Blob | null> => {
 export interface StickerFile {
     id: string;
     name: string;
+    tags?: string[];
 }
 
 export interface StickerCategory {
@@ -657,6 +658,7 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
                 files: category.files.map(file => ({
                     id: idMapping.get(file.id)!,
                     name: file.name,
+                    tags: file.tags,
                 })),
             }));
 
