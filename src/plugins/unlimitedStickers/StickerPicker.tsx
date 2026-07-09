@@ -1075,6 +1075,12 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
         }
     }, [allCategories, favoriteIds]);
 
+    const resetStickerDrag = React.useCallback(() => {
+        setDraggedStickerId(null);
+        draggedStickerSourceRef.current = null;
+        draggedStickerIndexRef.current = null;
+    }, []);
+
     const handleStickerDragEnd = React.useCallback(async () => {
         const source = draggedStickerSourceRef.current;
         if (source === FAVORITES_CATEGORY_ID) {
@@ -1082,11 +1088,8 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
         } else if (source && draggedStickerIndexRef.current !== null) {
             await DataStore.set(LIBRARY_KEY, allCategories);
         }
-
-        setDraggedStickerId(null);
-        draggedStickerSourceRef.current = null;
-        draggedStickerIndexRef.current = null;
-    }, [allCategories, favoriteIds]);
+        resetStickerDrag();
+    }, [allCategories, favoriteIds, resetStickerDrag]);
 
     const handleStickerDragOver = React.useCallback((categoryId: string, targetIndex: number) => {
         if (!draggedStickerId || !draggedStickerSourceRef.current || draggedStickerIndexRef.current === null) return;
@@ -1126,23 +1129,13 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
     const handleMoveSticker = React.useCallback(async (stickerId: string, targetCategory: string) => {
         if (isClosing) return;
 
-        const sourceCategory = draggedStickerSourceRef.current;
-        if (!sourceCategory) {
-            let foundSource: string | null = null;
-            for (const cat of allCategories) {
-                if (cat.files.some(f => f.id === stickerId)) {
-                    foundSource = cat.name;
-                    break;
-                }
-            }
-            if (!foundSource) return;
-        }
-
-        const actualSource = sourceCategory || allCategories.find(cat =>
+        const actualSource = allCategories.find(cat =>
             cat.files.some(f => f.id === stickerId)
         )?.name;
 
         if (!actualSource || actualSource === targetCategory) return;
+
+        resetStickerDrag();
 
         const updatedCategories = allCategories.map(cat => {
             if (cat.name === actualSource) {
@@ -1179,13 +1172,12 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
             type: Toasts.Type.SUCCESS,
             id: Toasts.genId()
         });
-    }, [allCategories, favoriteIds, isClosing]);
+    }, [allCategories, favoriteIds, isClosing, resetStickerDrag]);
 
     const handleStickerDrop = React.useCallback(async (targetCategory: string) => {
-        if (!draggedStickerId || !draggedStickerSourceRef.current) return;
+        if (!draggedStickerId) return;
         await handleMoveSticker(draggedStickerId, targetCategory);
-        handleStickerDragEnd();
-    }, [draggedStickerId, handleMoveSticker, handleStickerDragEnd]);
+    }, [draggedStickerId, handleMoveSticker]);
 
     const { filteredFavorites, filteredRecents, filteredLocalCategories } =
         React.useMemo(() => {
