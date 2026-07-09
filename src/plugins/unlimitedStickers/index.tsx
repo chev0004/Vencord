@@ -407,7 +407,7 @@ const StickerManagementSetting: React.FC = () => {
         }
         const totalStickers = deletedStickerIds.length;
 
-        const loadingToast = Toasts.show({
+        Toasts.show({
             message: `Deleting ${categoryNames.length} categor${categoryNames.length === 1 ? "y" : "ies"} and ${totalStickers} sticker${totalStickers === 1 ? "" : "s"}...`,
             type: Toasts.Type.MESSAGE,
             id: Toasts.genId(),
@@ -655,7 +655,7 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
         const categoriesToImport = importData.categories.filter(c => selectedCategories.has(c.name));
         const totalFiles = categoriesToImport.reduce((sum, cat) => sum + cat.files.length, 0);
 
-        const loadingToast = Toasts.show({
+        Toasts.show({
             message: `Importing ${selectedCategories.size} categor${selectedCategories.size === 1 ? "y" : "ies"} and ${totalFiles} file${totalFiles === 1 ? "" : "s"}...`,
             type: Toasts.Type.MESSAGE,
             id: Toasts.genId(),
