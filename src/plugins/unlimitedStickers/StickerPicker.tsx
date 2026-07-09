@@ -70,6 +70,28 @@ const logger = new Logger("UnlimitedStickers");
 const Spinner = findByCodeLazy("wanderingCubes");
 const FAVORITES_CATEGORY_ID = "__favorites__";
 
+const stickerLoadCallbacks = new WeakMap<Element, () => void>();
+let stickerLoadObserver: IntersectionObserver | undefined;
+
+const observeStickerLoad = (el: Element, callback: () => void) => {
+    stickerLoadObserver ??= new IntersectionObserver(entries => {
+        for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const cb = stickerLoadCallbacks.get(entry.target);
+            stickerLoadCallbacks.delete(entry.target);
+            stickerLoadObserver!.unobserve(entry.target);
+            cb?.();
+        }
+    }, { rootMargin: "200px" });
+    stickerLoadCallbacks.set(el, callback);
+    stickerLoadObserver.observe(el);
+};
+
+const unobserveStickerLoad = (el: Element) => {
+    stickerLoadCallbacks.delete(el);
+    stickerLoadObserver?.unobserve(el);
+};
+
 const ChevronIcon: React.FC<{
     className?: string;
     width?: number;
@@ -365,43 +387,25 @@ const StickerGridItem: React.FC<{
         const [imageUrl, setImageUrl] = React.useState<string | null>(null);
         const blobRef = React.useRef<Blob | null>(null);
         const itemRef = React.useRef<HTMLDivElement>(null);
-        const observerRef = React.useRef<IntersectionObserver | null>(null);
         const isClosingRef = React.useRef(isClosing);
 
         React.useEffect(() => {
             isClosingRef.current = isClosing;
-            if (isClosing && observerRef.current) {
-                observerRef.current.disconnect();
-                observerRef.current = null;
-            }
         }, [isClosing]);
 
         React.useEffect(() => {
-            if (isClosing) return;
+            const el = itemRef.current;
+            if (!el || isClosing) return;
 
-            const observer = new IntersectionObserver(
-                ([entry]) => {
-                    if (entry.isIntersecting && !isClosingRef.current) {
-                        observer.disconnect();
-                        observerRef.current = null;
-                        getStickerBlob(file.id).then(blob => {
-                            if (!isClosingRef.current && blob) {
-                                blobRef.current = blob;
-                                setImageUrl(URL.createObjectURL(blob));
-                            }
-                        });
+            observeStickerLoad(el, () => {
+                getStickerBlob(file.id).then(blob => {
+                    if (!isClosingRef.current && blob) {
+                        blobRef.current = blob;
+                        setImageUrl(URL.createObjectURL(blob));
                     }
-                },
-                { rootMargin: "200px" },
-            );
-            observerRef.current = observer;
-            if (itemRef.current) observer.observe(itemRef.current);
-            return () => {
-                if (observerRef.current) {
-                    observerRef.current.disconnect();
-                    observerRef.current = null;
-                }
-            };
+                });
+            });
+            return () => unobserveStickerLoad(el);
         }, [file.id, isClosing]);
 
         React.useEffect(() => () => {
