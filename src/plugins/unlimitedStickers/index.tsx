@@ -1144,7 +1144,8 @@ export default definePlugin({
     },
 
     onKey(e: KeyboardEvent) {
-        if ((e.ctrlKey || (e.metaKey && IS_MAC)) && e.altKey && (e.key === "s" || e.key === "S")) {
+        const mod = IS_MAC ? e.metaKey : e.ctrlKey;
+        if (mod && e.altKey && e.key.toLowerCase() === "s") {
             e.preventDefault();
             const channelId = SelectedChannelStore.getChannelId();
             if (!channelId) return;
