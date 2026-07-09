@@ -14,7 +14,7 @@ import { Devs, IS_MAC } from "@utils/constants";
 import { Logger } from "@utils/Logger";
 import { classes } from "@utils/misc";
 import { ModalCloseButton, ModalContent, ModalHeader, type ModalProps, ModalRoot, ModalSize, openModal } from "@utils/modal";
-import definePlugin, { OptionType } from "@utils/types";
+import definePlugin, { OptionType, type PluginNative } from "@utils/types";
 import { chooseFile, saveFile } from "@utils/web";
 import type { Channel } from "@vencord/discord-types";
 import { Alerts, ChannelStore, Checkbox, React, ScrollerThin, SelectedChannelStore, Toasts, UserStore } from "@webpack/common";
@@ -54,6 +54,81 @@ const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
     reader.readAsDataURL(blob);
 });
 
+const Native = IS_DISCORD_DESKTOP
+    ? VencordNative.pluginHelpers.UnlimitedStickers as PluginNative<typeof import("./native")>
+    : null;
+
+const blobToOcrBase64 = async (blob: Blob): Promise<string | null> => {
+    try {
+        const bitmap = await createImageBitmap(blob);
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext("2d")!;
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(bitmap, 0, 0);
+        const png = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/png"));
+        if (!png) return null;
+        return (await blobToDataUrl(png)).split(",")[1];
+    } catch {
+        return null;
+    }
+};
+
+const OCR_CHUNK_SIZE = 25;
+
+export const scanStickerText = async (): Promise<void> => {
+    if (!Native) return;
+
+    const categories = (await DataStore.get<StickerCategory[]>(LIBRARY_KEY)) ?? [];
+    const pending = categories.flatMap(c => c.files).filter(f => f.ocrText === undefined);
+    if (pending.length === 0) {
+        Toasts.show({ message: "All stickers are already scanned.", type: Toasts.Type.MESSAGE, id: Toasts.genId() });
+        return;
+    }
+
+    Toasts.show({ message: `Scanning text on ${pending.length} sticker${pending.length === 1 ? "" : "s"}...`, type: Toasts.Type.MESSAGE, id: Toasts.genId() });
+
+    let scanned = 0;
+    for (let i = 0; i < pending.length; i += OCR_CHUNK_SIZE) {
+        const chunk = pending.slice(i, i + OCR_CHUNK_SIZE);
+        const images: { id: string; data: string; }[] = [];
+        for (const file of chunk) {
+            const blob = await getStickerBlob(file.id);
+            const data = blob && await blobToOcrBase64(blob);
+            if (data) images.push({ id: file.id, data });
+        }
+
+        const response = await Native.ocrImages(images);
+        if (response.error) {
+            Toasts.pop();
+            Toasts.show({ message: `Sticker text scan failed: ${response.error}`, type: Toasts.Type.FAILURE, id: Toasts.genId() });
+            return;
+        }
+
+        const textById = response.results ?? {};
+        for (const file of chunk) {
+            textById[file.id] ??= "";
+        }
+        await DataStore.update<StickerCategory[]>(LIBRARY_KEY, (cats = []) =>
+            cats.map(cat => ({
+                ...cat,
+                files: cat.files.map(file =>
+                    file.id in textById ? { ...file, ocrText: textById[file.id] } : file
+                ),
+            }))
+        );
+
+        scanned += chunk.length;
+        Toasts.pop();
+        Toasts.show({ message: `Scanning sticker text... ${scanned}/${pending.length}`, type: Toasts.Type.MESSAGE, id: Toasts.genId() });
+    }
+
+    Toasts.pop();
+    Toasts.show({ message: `Scanned text on ${pending.length} sticker${pending.length === 1 ? "" : "s"}.`, type: Toasts.Type.SUCCESS, id: Toasts.genId() });
+};
+
 const normalizeSticker = async (file: File): Promise<Blob | null> => {
     if (/\.(gif|apng)$/i.test(file.name)) {
         return file.size <= STICKER_MAX_BYTES ? file : null;
@@ -79,6 +154,7 @@ export interface StickerFile {
     id: string;
     name: string;
     tags?: string[];
+    ocrText?: string;
 }
 
 export interface StickerCategory {
@@ -370,6 +446,7 @@ const StickerManagementSetting: React.FC = () => {
         Toasts.show({ message: `Added ${totalStickers} stickers across ${newCategories.length} categories.`, type: Toasts.Type.SUCCESS, id: Toasts.genId() });
         if (event.target) event.target.value = "";
         fetchCategories();
+        scanStickerText().catch(e => logger.error("Sticker text scan failed:", e));
     };
 
     const deleteStickerData = async (stickerIds: string[]) => {
@@ -463,6 +540,16 @@ const StickerManagementSetting: React.FC = () => {
                 <Button onClick={handleOpenReorderModal} size="small" variant="secondary" disabled={categories.length === 0}>
                     Reorder Categories
                 </Button>
+                {IS_DISCORD_DESKTOP && (
+                    <Button
+                        onClick={() => scanStickerText().catch(e => logger.error("Sticker text scan failed:", e))}
+                        size="small"
+                        variant="secondary"
+                        disabled={categories.length === 0}
+                    >
+                        Scan Sticker Text
+                    </Button>
+                )}
                 <Button onClick={fetchCategories} size="small" variant="secondary" style={{ padding: "4px 8px" }}>
                     <RefreshIcon width={16} height={16} />
                 </Button>
@@ -659,6 +746,7 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
                     id: idMapping.get(file.id)!,
                     name: file.name,
                     tags: file.tags,
+                    ocrText: file.ocrText,
                 })),
             }));
 

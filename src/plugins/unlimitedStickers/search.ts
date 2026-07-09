@@ -43,8 +43,16 @@ const ROMAJI_TO_HIRA: Record<string, string> = {
 
 const SOKUON_CONSONANTS = "kgsztdhbpmyrwcfjv";
 
+const SMALL_KANA: Record<string, string> = {
+    "ぁ": "あ", "ぃ": "い", "ぅ": "う", "ぇ": "え", "ぉ": "お",
+    "っ": "つ", "ゃ": "や", "ゅ": "ゆ", "ょ": "よ", "ゎ": "わ",
+};
+
 const katakanaToHiragana = (text: string): string =>
     text.replace(/[ァ-ヶ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+
+const foldSmallKana = (text: string): string =>
+    text.replace(/[ぁぃぅぇぉっゃゅょゎ]/g, ch => SMALL_KANA[ch]);
 
 export const romajiToHiragana = (input: string): string => {
     let out = "";
@@ -76,11 +84,11 @@ export const romajiToHiragana = (input: string): string => {
 
 export const getQueryForms = (query: string): string[] => {
     const hira = katakanaToHiragana(query.toLowerCase());
-    const romaji = romajiToHiragana(hira);
-    return romaji === hira ? [hira] : [hira, romaji];
+    const forms = [hira, romajiToHiragana(hira)].map(foldSmallKana);
+    return [...new Set(forms)];
 };
 
 export const textMatchesForms = (text: string, queryForms: string[]): boolean => {
-    const hira = katakanaToHiragana(text.toLowerCase());
+    const hira = foldSmallKana(katakanaToHiragana(text.toLowerCase()));
     return queryForms.some(form => hira.includes(form));
 };

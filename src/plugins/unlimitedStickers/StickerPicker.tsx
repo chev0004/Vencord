@@ -1349,7 +1349,8 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
             const queryForms = getQueryForms(searchQuery);
             const stickerMatches = (f: StickerFile) =>
                 textMatchesForms(f.name, queryForms) ||
-                (f.tags ?? []).some(tag => textMatchesForms(tag, queryForms));
+                (f.tags ?? []).some(tag => textMatchesForms(tag, queryForms)) ||
+                (!!f.ocrText && textMatchesForms(f.ocrText.replace(/\s+/g, ""), queryForms));
             const filteredFav = favoriteFiles.filter(stickerMatches);
             const filteredRec = recentFiles.filter(stickerMatches);
             const filteredCat = allCategories
