@@ -45,6 +45,7 @@ import {
     addRecentSticker,
     FAVORITES_EXPANDED_KEY,
     getFavorites,
+    getStickerBlob,
     getRecentStickers,
     LIBRARY_KEY,
     RECENT_EXPANDED_KEY,
@@ -171,7 +172,7 @@ const ensureStickerGuild = async (): Promise<string | null> => {
 const uploadAndReplaceSticker = async (
     guildId: string,
     stickerName: string,
-    base64File: string,
+    stickerBlob: Blob,
 ): Promise<string | null> => {
     const entry = getAccountGuildEntry();
     const currentStickerId = entry?.slotId;
@@ -186,7 +187,6 @@ const uploadAndReplaceSticker = async (
     }
 
     try {
-        const blob = await fetch(base64File).then(res => res.blob());
         const formData = new FormData();
         const safeStickerNameChars = Array.from(stickerName.trim()).slice(0, 30);
         while (safeStickerNameChars.length < 2) safeStickerNameChars.push("_");
@@ -199,8 +199,8 @@ const uploadAndReplaceSticker = async (
         formData.append("tags", "vencord");
         formData.append(
             "file",
-            blob,
-            `${safeStickerName}.${blob.type.split("/")[1]}`,
+            stickerBlob,
+            `${safeStickerName}.${stickerBlob.type.split("/")[1] || "png"}`,
         );
         const newSticker = await RestAPI.post({
             url: `/guilds/${guildId}/stickers`,
@@ -361,7 +361,8 @@ const StickerGridItem: React.FC<{
     anyDragging = false,
 }) => {
         const [isSending, setIsSending] = React.useState(false);
-        const [base64, setBase64] = React.useState<string | null>(null);
+        const [imageUrl, setImageUrl] = React.useState<string | null>(null);
+        const blobRef = React.useRef<Blob | null>(null);
         const itemRef = React.useRef<HTMLDivElement>(null);
         const observerRef = React.useRef<IntersectionObserver | null>(null);
         const isClosingRef = React.useRef(isClosing);
@@ -382,11 +383,12 @@ const StickerGridItem: React.FC<{
                     if (entry.isIntersecting && !isClosingRef.current) {
                         observer.disconnect();
                         observerRef.current = null;
-                        DataStore.get<string>(`${STICKER_DATA_KEY_PREFIX}${file.id}`).then(
-                            (data) => {
-                                if (!isClosingRef.current && data) setBase64(data);
-                            },
-                        );
+                        getStickerBlob(file.id).then(blob => {
+                            if (!isClosingRef.current && blob) {
+                                blobRef.current = blob;
+                                setImageUrl(URL.createObjectURL(blob));
+                            }
+                        });
                     }
                 },
                 { rootMargin: "200px" },
@@ -401,15 +403,20 @@ const StickerGridItem: React.FC<{
             };
         }, [file.id, isClosing]);
 
+        React.useEffect(() => () => {
+            if (imageUrl) URL.revokeObjectURL(imageUrl);
+        }, [imageUrl]);
+
         const handleStickerClick = async () => {
-            if (isSending || !base64 || isClosingRef.current) return;
+            const blob = blobRef.current;
+            if (isSending || !blob || isClosingRef.current) return;
             setIsSending(true);
 
             try {
                 const newStickerId = await uploadAndReplaceSticker(
                     guildId,
                     file.name,
-                    base64,
+                    blob,
                 );
 
                 if (isClosingRef.current) {
@@ -534,10 +541,10 @@ const StickerGridItem: React.FC<{
             ));
         };
 
-        const tooltipContent = base64 ? (
+        const tooltipContent = imageUrl ? (
             <div className="unlimited-stickers-tooltip-preview">
                 <img
-                    src={base64}
+                    src={imageUrl}
                     alt={file.name}
                     className="unlimited-stickers-tooltip-preview-img"
                 />
@@ -547,7 +554,7 @@ const StickerGridItem: React.FC<{
             </div>
         ) : file.name;
 
-        const isDraggable = !!stickerDragCategoryId && !!base64 && !isSending;
+        const isDraggable = !!stickerDragCategoryId && !!imageUrl && !isSending;
         const showTooltip = !anyDragging;
 
         return (
@@ -559,7 +566,7 @@ const StickerGridItem: React.FC<{
                             className={classes(
                                 "unlimited-stickers-grid-item",
                                 isSending && "unlimited-stickers-grid-item--loading",
-                                !base64 &&
+                                !imageUrl &&
                                 !isSending &&
                                 "unlimited-stickers-grid-item--placeholder",
                                 isDragging && "unlimited-stickers-grid-item--dragging",
@@ -577,16 +584,16 @@ const StickerGridItem: React.FC<{
                                     <Spinner type={Spinner.Type.SPINNING_CIRCLE} />
                                 </div>
                             )}
-                            {base64 && (
+                            {imageUrl && (
                                 <img
-                                    src={base64}
+                                    src={imageUrl}
                                     alt={file.name}
                                     className="unlimited-stickers-grid-item-img"
                                     loading="lazy"
                                     onLoad={(e) => e.currentTarget.classList.add("loaded")}
                                 />
                             )}
-                            {base64 && !isSending && (
+                            {imageUrl && !isSending && (
                                 <Tooltip
                                     text={
                                         isFavorite

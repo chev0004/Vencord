@@ -33,6 +33,23 @@ export const CATEGORY_ORDER_KEY = "UnlimitedStickers_CategoryOrder";
 
 const logger = new Logger("UnlimitedStickers");
 
+export const getStickerBlob = async (id: string): Promise<Blob | null> => {
+    const key = `${STICKER_DATA_KEY_PREFIX}${id}`;
+    const data = await DataStore.get<Blob | string>(key);
+    if (!data) return null;
+    if (typeof data !== "string") return data;
+    const blob = await fetch(data).then(r => r.blob());
+    await DataStore.set(key, blob);
+    return blob;
+};
+
+const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+});
+
 export interface StickerFile {
     id: string;
     name: string;
@@ -299,24 +316,17 @@ const StickerManagementSetting: React.FC = () => {
         }
 
         const newCategories: StickerCategory[] = [];
-        const stickerDataToSave: [string, string][] = [];
+        const stickerDataToSave: [string, Blob][] = [];
 
         for (const [categoryName, categoryFiles] of filesByDir.entries()) {
-            const stickerFiles: StickerFile[] = await Promise.all(
-                categoryFiles.map(file => new Promise<StickerFile>((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                        const newId = nanoid();
-                        stickerDataToSave.push([`${STICKER_DATA_KEY_PREFIX}${newId}`, reader.result as string]);
-                        resolve({
-                            id: newId,
-                            name: file.name.replace(/\.[^/.]+$/, ""),
-                        });
-                    };
-                    reader.onerror = reject;
-                    reader.readAsDataURL(file);
-                }))
-            );
+            const stickerFiles = categoryFiles.map(file => {
+                const newId = nanoid();
+                stickerDataToSave.push([`${STICKER_DATA_KEY_PREFIX}${newId}`, file]);
+                return {
+                    id: newId,
+                    name: file.name.replace(/\.[^/.]+$/, ""),
+                };
+            });
             newCategories.push({ name: categoryName, files: stickerFiles });
         }
 
@@ -631,12 +641,12 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
                 })),
             }));
 
-            const stickerEntries: [string, string][] = [];
+            const stickerEntries: [string, Blob][] = [];
             for (const oldId of selectedStickerIds) {
                 const base64 = importData.stickerData[oldId];
                 const newId = idMapping.get(oldId);
                 if (base64 && newId) {
-                    stickerEntries.push([`${STICKER_DATA_KEY_PREFIX}${newId}`, base64]);
+                    stickerEntries.push([`${STICKER_DATA_KEY_PREFIX}${newId}`, await fetch(base64).then(r => r.blob())]);
                 }
             }
             await DataStore.setMany(stickerEntries);
@@ -759,11 +769,13 @@ export const exportStickers = async (categoryNames?: string[]): Promise<void> =>
         });
 
         const ids = Array.from(stickerIds);
-        const values = await DataStore.getMany<string>(ids.map(id => `${STICKER_DATA_KEY_PREFIX}${id}`));
+        const values = await DataStore.getMany<Blob | string>(ids.map(id => `${STICKER_DATA_KEY_PREFIX}${id}`));
         const stickerData: Record<string, string> = {};
-        ids.forEach((id, i) => {
-            if (values[i]) stickerData[id] = values[i];
-        });
+        await Promise.all(ids.map(async (id, i) => {
+            const value = values[i];
+            if (!value) return;
+            stickerData[id] = typeof value === "string" ? value : await blobToDataUrl(value);
+        }));
 
         const exportData: StickerExportData = {
             version: "1.0",
