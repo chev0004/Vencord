@@ -421,7 +421,7 @@ const StickerManagementSetting: React.FC = () => {
                 <Button onClick={() => fileInputRef.current?.click()} size="small">
                     Upload Sticker Folder(s)
                 </Button>
-                <Button onClick={importStickers} size="small" variant="primary">
+                <Button onClick={() => importStickers(fetchCategories)} size="small" variant="primary">
                     Import
                 </Button>
                 <Button onClick={() => exportStickers()} size="small" variant="primary">
@@ -579,7 +579,7 @@ interface StickerExportData {
     favorites: string[];
 }
 
-const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportData; }> = ({ onClose, importData }) => {
+const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportData; onImported?: () => void; }> = ({ onClose, transitionState, importData, onImported }) => {
     const [selectedCategories, setSelectedCategories] = React.useState<Set<string>>(
         new Set(importData.categories.map(c => c.name))
     );
@@ -603,15 +603,6 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
     };
 
     const handleImport = async () => {
-        if (selectedCategories.size === 0) {
-            Toasts.show({
-                message: "Please select at least one category to import.",
-                type: Toasts.Type.FAILURE,
-                id: Toasts.genId(),
-            });
-            return;
-        }
-
         onClose();
 
         const categoriesToImport = importData.categories.filter(c => selectedCategories.has(c.name));
@@ -697,6 +688,7 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
                 type: Toasts.Type.SUCCESS,
                 id: Toasts.genId(),
             });
+            onImported?.();
         } catch (error) {
             logger.error("Failed to import selected stickers:", error);
             Toasts.pop();
@@ -709,7 +701,7 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
     };
 
     return (
-        <ModalRoot {...({} as ModalProps)} size={ModalSize.MEDIUM}>
+        <ModalRoot transitionState={transitionState} size={ModalSize.MEDIUM}>
             <ModalHeader>
                 <Heading tag="h2" style={{ flexGrow: 1 }}>
                     Select Categories to Import
@@ -819,7 +811,7 @@ export const exportStickers = async (categoryNames?: string[]): Promise<void> =>
     }
 };
 
-export const importStickersSelected = async (): Promise<void> => {
+export const importStickers = async (onImported?: () => void): Promise<void> => {
     try {
         let jsonData: string;
 
@@ -838,12 +830,7 @@ export const importStickersSelected = async (): Promise<void> => {
             const file = await chooseFile("application/json");
             if (!file) return;
 
-            jsonData = await new Promise<string>((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result as string);
-                reader.onerror = reject;
-                reader.readAsText(file);
-            });
+            jsonData = await file.text();
         }
 
         const importData = JSON.parse(jsonData) as StickerExportData;
@@ -853,130 +840,12 @@ export const importStickersSelected = async (): Promise<void> => {
         }
 
         openModal((props: ModalProps) => (
-            <ImportSelectionModal {...props} importData={importData} />
+            <ImportSelectionModal {...props} importData={importData} onImported={onImported} />
         ));
     } catch (error) {
         logger.error("Failed to open import selection:", error);
         Toasts.show({
             message: `Failed to open import selection: ${error instanceof Error ? error.message : String(error)}`,
-            type: Toasts.Type.FAILURE,
-            id: Toasts.genId(),
-        });
-    }
-};
-
-export const importStickers = async (): Promise<void> => {
-    try {
-        let jsonData: string;
-
-        if (IS_DISCORD_DESKTOP) {
-            const [file] = await DiscordNative.fileManager.openFiles({
-                filters: [
-                    { name: "Unlimited Stickers Export", extensions: ["json"] },
-                    { name: "all", extensions: ["*"] }
-                ]
-            });
-
-            if (!file) return;
-
-            jsonData = new TextDecoder().decode(file.data);
-        } else {
-            const file = await chooseFile("application/json");
-            if (!file) return;
-
-            jsonData = await new Promise<string>((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result as string);
-                reader.onerror = reject;
-                reader.readAsText(file);
-            });
-        }
-
-        const importData = JSON.parse(jsonData) as StickerExportData;
-
-        if (!importData.version || !importData.categories || !importData.stickerData) {
-            throw new Error("Invalid export file format");
-        }
-
-        const totalCategories = importData.categories.length;
-        const totalFiles = Object.keys(importData.stickerData).length;
-
-        const loadingToast = Toasts.show({
-            message: `Importing ${totalCategories} categor${totalCategories === 1 ? "y" : "ies"} and ${totalFiles} file${totalFiles === 1 ? "" : "s"}...`,
-            type: Toasts.Type.MESSAGE,
-            id: Toasts.genId(),
-        });
-
-        const idMapping = new Map<string, string>();
-        const allOldIds = new Set<string>();
-
-        for (const category of importData.categories) {
-            for (const file of category.files) {
-                allOldIds.add(file.id);
-                if (!idMapping.has(file.id)) {
-                    idMapping.set(file.id, nanoid());
-                }
-            }
-        }
-
-        const importedCategories: StickerCategory[] = importData.categories.map(category => ({
-            name: category.name,
-            files: category.files.map(file => ({
-                id: idMapping.get(file.id)!,
-                name: file.name,
-            })),
-        }));
-
-        const stickerDataPromises: Promise<void>[] = [];
-        for (const [oldId, base64] of Object.entries(importData.stickerData)) {
-            const newId = idMapping.get(oldId);
-            if (newId) {
-                stickerDataPromises.push(
-                    DataStore.set(`${STICKER_DATA_KEY_PREFIX}${newId}`, base64)
-                );
-            }
-        }
-        await Promise.all(stickerDataPromises);
-
-        await DataStore.update<StickerCategory[]>(LIBRARY_KEY, (existingData = []) => {
-            const result = [...existingData];
-            for (const importedCategory of importedCategories) {
-                const existingCategory = result.find(c => c.name === importedCategory.name);
-                if (existingCategory) {
-                    const existingNames = new Set(existingCategory.files.map(f => f.name));
-                    const uniqueNewFiles = importedCategory.files.filter(f => !existingNames.has(f.name));
-                    existingCategory.files.push(...uniqueNewFiles);
-                } else {
-                    result.push(importedCategory);
-                }
-            }
-            return result;
-        });
-
-        if (importData.favorites && importData.favorites.length > 0) {
-            const newFavoriteIds = importData.favorites
-                .map(oldId => idMapping.get(oldId))
-                .filter((id): id is string => id !== undefined);
-
-            await DataStore.update<string[]>(FAVORITES_KEY, (existingFavorites = []) => {
-                const combined = new Set([...existingFavorites, ...newFavoriteIds]);
-                return Array.from(combined);
-            });
-        }
-
-        const totalStickers = Object.keys(importData.stickerData).length;
-        const totalFavorites = importData.favorites?.length ?? 0;
-
-        Toasts.pop();
-        Toasts.show({
-            message: `Imported ${importedCategories.length} categories with ${totalStickers} stickers${totalFavorites > 0 ? ` and ${totalFavorites} favorites` : ""}.`,
-            type: Toasts.Type.SUCCESS,
-            id: Toasts.genId(),
-        });
-    } catch (error) {
-        logger.error("Failed to import stickers:", error);
-        Toasts.show({
-            message: `Failed to import stickers: ${error instanceof Error ? error.message : String(error)}`,
             type: Toasts.Type.FAILURE,
             id: Toasts.genId(),
         });
