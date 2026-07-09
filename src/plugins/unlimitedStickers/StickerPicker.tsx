@@ -48,6 +48,7 @@ import {
     LIBRARY_KEY,
     RECENT_EXPANDED_KEY,
     RECENT_KEY,
+    RECENT_LIMIT,
     STICKER_DATA_KEY_PREFIX,
     type StickerCategory,
     type StickerFile,
@@ -978,7 +979,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
         if (isClosing) return;
         await addRecentSticker(file.id);
         setRecentIds((prev) =>
-            [file.id, ...prev.filter((id) => id !== file.id)].slice(0, 16),
+            [file.id, ...prev.filter((id) => id !== file.id)].slice(0, RECENT_LIMIT),
         );
     }, [isClosing]);
 
