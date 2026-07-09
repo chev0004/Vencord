@@ -424,10 +424,10 @@ const StickerManagementSetting: React.FC = () => {
                 <Button onClick={importStickers} size="small" variant="primary">
                     Import
                 </Button>
-                <Button onClick={exportStickers} size="small" variant="primary">
+                <Button onClick={() => exportStickers()} size="small" variant="primary">
                     Export All
                 </Button>
-                <Button onClick={() => exportSelectedStickers(Array.from(selectedCategories))} size="small" variant="primary" disabled={selectedCategories.size === 0}>
+                <Button onClick={() => exportStickers(Array.from(selectedCategories))} size="small" variant="primary" disabled={selectedCategories.size === 0}>
                     Export Selected
                 </Button>
                 <Button onClick={handleDeleteSelected} size="small" variant="dangerPrimary" disabled={selectedCategories.size === 0}>
@@ -753,21 +753,24 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
     );
 };
 
-export const exportStickers = async (): Promise<void> => {
+export const exportStickers = async (categoryNames?: string[]): Promise<void> => {
     try {
-        const categories = (await DataStore.get<StickerCategory[]>(LIBRARY_KEY)) ?? [];
+        const allCategories = (await DataStore.get<StickerCategory[]>(LIBRARY_KEY)) ?? [];
+        const categories = categoryNames
+            ? allCategories.filter(c => categoryNames.includes(c.name))
+            : allCategories;
         const favorites = await getFavorites();
 
-        const allStickerIds = new Set<string>();
+        const stickerIds = new Set<string>();
         for (const category of categories) {
             for (const file of category.files) {
-                allStickerIds.add(file.id);
+                stickerIds.add(file.id);
             }
         }
         const totalCategories = categories.length;
-        const totalStickers = allStickerIds.size;
+        const totalStickers = stickerIds.size;
 
-        const loadingToast = Toasts.show({
+        Toasts.show({
             message: `Exporting ${totalCategories} categor${totalCategories === 1 ? "y" : "ies"} and ${totalStickers} sticker${totalStickers === 1 ? "" : "s"}...`,
             type: Toasts.Type.MESSAGE,
             id: Toasts.genId(),
@@ -775,7 +778,7 @@ export const exportStickers = async (): Promise<void> => {
 
         const stickerData: Record<string, string> = {};
         await Promise.all(
-            Array.from(allStickerIds).map(async (id) => {
+            Array.from(stickerIds).map(async (id) => {
                 const data = await DataStore.get<string>(`${STICKER_DATA_KEY_PREFIX}${id}`);
                 if (data) {
                     stickerData[id] = data;
@@ -787,7 +790,7 @@ export const exportStickers = async (): Promise<void> => {
             version: "1.0",
             categories,
             stickerData,
-            favorites,
+            favorites: favorites.filter(id => stickerIds.has(id)),
         };
 
         const json = JSON.stringify(exportData, null, 2);
@@ -795,14 +798,14 @@ export const exportStickers = async (): Promise<void> => {
         const filename = `unlimited-stickers-export-${new Date().toISOString().split('T')[0]}.json`;
 
         if (IS_DISCORD_DESKTOP) {
-            DiscordNative.fileManager.saveWithDialog(data, filename);
+            await DiscordNative.fileManager.saveWithDialog(data, filename);
         } else {
             saveFile(new File([data], filename, { type: "application/json" }));
         }
 
         Toasts.pop();
         Toasts.show({
-            message: `Exported ${categories.length} categories with ${allStickerIds.size} stickers and ${favorites.length} favorites.`,
+            message: `Exported ${totalCategories} categor${totalCategories === 1 ? "y" : "ies"} with ${totalStickers} sticker${totalStickers === 1 ? "" : "s"}.`,
             type: Toasts.Type.SUCCESS,
             id: Toasts.genId(),
         });
@@ -810,82 +813,6 @@ export const exportStickers = async (): Promise<void> => {
         logger.error("Failed to export stickers:", error);
         Toasts.show({
             message: "Failed to export stickers. Check console for details.",
-            type: Toasts.Type.FAILURE,
-            id: Toasts.genId(),
-        });
-    }
-};
-
-export const exportSelectedStickers = async (selectedCategoryNames: string[]): Promise<void> => {
-    if (selectedCategoryNames.length === 0) {
-        Toasts.show({
-            message: "Please select at least one category to export.",
-            type: Toasts.Type.FAILURE,
-            id: Toasts.genId(),
-        });
-        return;
-    }
-
-    try {
-        const categories = (await DataStore.get<StickerCategory[]>(LIBRARY_KEY)) ?? [];
-        const categoriesToExport = categories.filter(c => selectedCategoryNames.includes(c.name));
-        const favorites = await getFavorites();
-
-        const selectedStickerIds = new Set<string>();
-        for (const category of categoriesToExport) {
-            for (const file of category.files) {
-                selectedStickerIds.add(file.id);
-            }
-        }
-
-        const totalCategories = categoriesToExport.length;
-        const totalStickers = selectedStickerIds.size;
-
-        const loadingToast = Toasts.show({
-            message: `Exporting ${totalCategories} categor${totalCategories === 1 ? "y" : "ies"} and ${totalStickers} sticker${totalStickers === 1 ? "" : "s"}...`,
-            type: Toasts.Type.MESSAGE,
-            id: Toasts.genId(),
-        });
-
-        const stickerData: Record<string, string> = {};
-        await Promise.all(
-            Array.from(selectedStickerIds).map(async (id) => {
-                const data = await DataStore.get<string>(`${STICKER_DATA_KEY_PREFIX}${id}`);
-                if (data) {
-                    stickerData[id] = data;
-                }
-            })
-        );
-
-        const selectedFavorites = favorites.filter(id => selectedStickerIds.has(id));
-
-        const exportData: StickerExportData = {
-            version: "1.0",
-            categories: categoriesToExport,
-            stickerData,
-            favorites: selectedFavorites,
-        };
-
-        const json = JSON.stringify(exportData, null, 2);
-        const data = new TextEncoder().encode(json);
-        const filename = `unlimited-stickers-export-selected-${new Date().toISOString().split('T')[0]}.json`;
-
-        if (IS_DISCORD_DESKTOP) {
-            DiscordNative.fileManager.saveWithDialog(data, filename);
-        } else {
-            saveFile(new File([data], filename, { type: "application/json" }));
-        }
-
-        Toasts.pop();
-        Toasts.show({
-            message: `Exported ${totalCategories} categor${totalCategories === 1 ? "y" : "ies"} with ${totalStickers} sticker${totalStickers === 1 ? "" : "s"} and ${selectedFavorites.length} favorite${selectedFavorites.length === 1 ? "" : "s"}.`,
-            type: Toasts.Type.SUCCESS,
-            id: Toasts.genId(),
-        });
-    } catch (error) {
-        logger.error("Failed to export selected stickers:", error);
-        Toasts.show({
-            message: "Failed to export selected stickers. Check console for details.",
             type: Toasts.Type.FAILURE,
             id: Toasts.genId(),
         });
