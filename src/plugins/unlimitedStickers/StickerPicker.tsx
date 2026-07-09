@@ -155,12 +155,11 @@ const uploadAndReplaceSticker = async (
     }
 
     try {
-        const blob = await fetch(base64File).then((res) => res.blob());
+        const blob = await fetch(base64File).then(res => res.blob());
         const formData = new FormData();
-        const safeStickerName = stickerName
-            .replace(/[^a-zA-Z0-9_]/g, "_")
-            .substring(0, 30)
-            .padEnd(2, "_");
+        const safeStickerNameChars = Array.from(stickerName.trim()).slice(0, 30);
+        while (safeStickerNameChars.length < 2) safeStickerNameChars.push("_");
+        const safeStickerName = safeStickerNameChars.join("");
         formData.append("name", safeStickerName);
         formData.append(
             "description",
