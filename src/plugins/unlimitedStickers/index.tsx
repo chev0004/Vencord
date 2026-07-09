@@ -299,7 +299,7 @@ const StickerManagementSetting: React.FC = () => {
         }
 
         const newCategories: StickerCategory[] = [];
-        const stickerDataToSave: { key: string; value: string; }[] = [];
+        const stickerDataToSave: [string, string][] = [];
 
         for (const [categoryName, categoryFiles] of filesByDir.entries()) {
             const stickerFiles: StickerFile[] = await Promise.all(
@@ -307,10 +307,7 @@ const StickerManagementSetting: React.FC = () => {
                     const reader = new FileReader();
                     reader.onload = () => {
                         const newId = nanoid();
-                        stickerDataToSave.push({
-                            key: `${STICKER_DATA_KEY_PREFIX}${newId}`,
-                            value: reader.result as string,
-                        });
+                        stickerDataToSave.push([`${STICKER_DATA_KEY_PREFIX}${newId}`, reader.result as string]);
                         resolve({
                             id: newId,
                             name: file.name.replace(/\.[^/.]+$/, ""),
@@ -323,7 +320,7 @@ const StickerManagementSetting: React.FC = () => {
             newCategories.push({ name: categoryName, files: stickerFiles });
         }
 
-        await Promise.all(stickerDataToSave.map(item => DataStore.set(item.key, item.value)));
+        await DataStore.setMany(stickerDataToSave);
 
         await DataStore.update<StickerCategory[]>(LIBRARY_KEY, (existingData = []) => {
             for (const newCategory of newCategories) {
@@ -346,10 +343,7 @@ const StickerManagementSetting: React.FC = () => {
     };
 
     const deleteStickerData = async (stickerIds: string[]) => {
-        const keysToDelete = [
-            ...stickerIds.map(id => `${STICKER_DATA_KEY_PREFIX}${id}`)
-        ];
-        await Promise.all(keysToDelete.map(key => DataStore.del(key)));
+        await DataStore.delMany(stickerIds.map(id => `${STICKER_DATA_KEY_PREFIX}${id}`));
     };
 
     const handleBatchDelete = async (categoryNames: string[]) => {
@@ -637,19 +631,15 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
                 })),
             }));
 
-            const stickerDataPromises: Promise<void>[] = [];
+            const stickerEntries: [string, string][] = [];
             for (const oldId of selectedStickerIds) {
                 const base64 = importData.stickerData[oldId];
-                if (base64) {
-                    const newId = idMapping.get(oldId);
-                    if (newId) {
-                        stickerDataPromises.push(
-                            DataStore.set(`${STICKER_DATA_KEY_PREFIX}${newId}`, base64)
-                        );
-                    }
+                const newId = idMapping.get(oldId);
+                if (base64 && newId) {
+                    stickerEntries.push([`${STICKER_DATA_KEY_PREFIX}${newId}`, base64]);
                 }
             }
-            await Promise.all(stickerDataPromises);
+            await DataStore.setMany(stickerEntries);
 
             await DataStore.update<StickerCategory[]>(LIBRARY_KEY, (existingData = []) => {
                 const result = [...existingData];
@@ -768,15 +758,12 @@ export const exportStickers = async (categoryNames?: string[]): Promise<void> =>
             id: Toasts.genId(),
         });
 
+        const ids = Array.from(stickerIds);
+        const values = await DataStore.getMany<string>(ids.map(id => `${STICKER_DATA_KEY_PREFIX}${id}`));
         const stickerData: Record<string, string> = {};
-        await Promise.all(
-            Array.from(stickerIds).map(async (id) => {
-                const data = await DataStore.get<string>(`${STICKER_DATA_KEY_PREFIX}${id}`);
-                if (data) {
-                    stickerData[id] = data;
-                }
-            })
-        );
+        ids.forEach((id, i) => {
+            if (values[i]) stickerData[id] = values[i];
+        });
 
         const exportData: StickerExportData = {
             version: "1.0",
