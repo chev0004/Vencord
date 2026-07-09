@@ -57,6 +57,8 @@ import {
     settings,
     getCategoryOrder,
     saveCategoryOrder,
+    renameCategoryOrder,
+    pruneCategoryOrder,
     applyCategoryOrder,
 } from "./index";
 import { getPluginIntlMessage } from "./intl";
@@ -997,6 +999,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
         );
         setAllCategories(updatedCategories);
         await DataStore.set(LIBRARY_KEY, updatedCategories);
+        await renameCategoryOrder(oldName, newName);
         return true;
     }, [allCategories, isClosing]);
 
@@ -1032,6 +1035,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
 
         setAllCategories(updatedCategories);
         await DataStore.set(LIBRARY_KEY, updatedCategories);
+        await pruneCategoryOrder(updatedCategories.map(c => c.name));
         await DataStore.del(`${STICKER_DATA_KEY_PREFIX}${stickerId}`);
     }, [allCategories, favoriteIds, recentIds, isClosing]);
 
@@ -1160,6 +1164,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
 
         setAllCategories(updatedCategories);
         await DataStore.set(LIBRARY_KEY, updatedCategories);
+        await pruneCategoryOrder(updatedCategories.map(c => c.name));
 
         if (favoriteIds.has(stickerId)) {
             const newFavoriteIds = Array.from(favoriteIds).filter(id => id !== stickerId);

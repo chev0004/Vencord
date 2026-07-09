@@ -375,6 +375,7 @@ const StickerManagementSetting: React.FC = () => {
 
         await deleteStickerData(deletedStickerIds);
         await DataStore.set(LIBRARY_KEY, remainingCategories);
+        await pruneCategoryOrder(remainingCategories.map(c => c.name));
 
         await DataStore.update<string[]>(FAVORITES_KEY, (favs = []) => favs.filter(id => !deletedStickerIds.includes(id)));
         await DataStore.update<string[]>(RECENT_KEY, (recents = []) => recents.filter(id => !deletedStickerIds.includes(id)));
@@ -535,6 +536,19 @@ export const getCategoryOrder = async (): Promise<string[]> => {
 
 export const saveCategoryOrder = async (order: string[]): Promise<void> => {
     await DataStore.set(CATEGORY_ORDER_KEY, order);
+};
+
+export const renameCategoryOrder = async (oldName: string, newName: string): Promise<void> => {
+    await DataStore.update<string[]>(CATEGORY_ORDER_KEY, (order = []) =>
+        order.map(name => name === oldName ? newName : name)
+    );
+};
+
+export const pruneCategoryOrder = async (existingNames: string[]): Promise<void> => {
+    const names = new Set(existingNames);
+    await DataStore.update<string[]>(CATEGORY_ORDER_KEY, (order = []) =>
+        order.filter(name => names.has(name))
+    );
 };
 
 export const applyCategoryOrder = (categories: StickerCategory[], customOrder: string[]): StickerCategory[] => {
