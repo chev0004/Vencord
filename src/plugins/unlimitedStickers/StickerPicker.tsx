@@ -424,7 +424,7 @@ const EditTagsModal: React.FC<{
     );
 };
 
-const StickerGridItem: React.FC<{
+const StickerGridItem = React.memo<{
     file: StickerFile;
     guildId: string;
     channel: Channel;
@@ -447,7 +447,7 @@ const StickerGridItem: React.FC<{
     stickerIndex?: number;
     onStickerDragOver?: (categoryName: string, targetIndex: number) => void;
     anyDragging?: boolean;
-}> = ({
+}>(({
     file,
     guildId,
     channel,
@@ -726,7 +726,7 @@ const StickerGridItem: React.FC<{
                 )}
             </Tooltip>
         );
-    };
+    });
 
 interface StickerCategoryWrapperProps {
     categoryName: string;
@@ -762,7 +762,7 @@ interface StickerCategoryWrapperProps {
     getLibraryCategoryForFile?: (file: StickerFile) => string | undefined;
 }
 
-const StickerCategoryWrapper: React.FC<StickerCategoryWrapperProps> = ({
+const StickerCategoryWrapper = React.memo<StickerCategoryWrapperProps>(({
     initialIsExpanded,
     storageKey,
     categoryName,
@@ -994,7 +994,7 @@ const StickerCategoryWrapper: React.FC<StickerCategoryWrapperProps> = ({
             )}
         </div>
     );
-};
+});
 
 interface StickerPickerModalProps {
     rootProps: ModalProps;
@@ -1024,6 +1024,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
         [FAVORITES_EXPANDED_KEY]: getCachedExpansion(FAVORITES_EXPANDED_KEY) ?? true,
         [RECENT_EXPANDED_KEY]: getCachedExpansion(RECENT_EXPANDED_KEY) ?? true,
     });
+    const skipLoadRef = React.useRef(getCachedLibrary() !== null && getKnownGuildId() !== null);
     const isClosingRef = React.useRef(false);
 
     const isClosing = rootProps.transitionState === 2;
@@ -1090,7 +1091,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
 
         if (rootProps.transitionState === 1 && !hasStartedLoading) {
             setHasStartedLoading(true);
-            loadStickerData();
+            if (!skipLoadRef.current) loadStickerData();
         }
     }, [rootProps.transitionState, hasStartedLoading, isClosing]);
 
@@ -1383,6 +1384,38 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
             };
         }, [allCategories, favoriteFiles, recentFiles, searchQuery]);
 
+    const allCategoryNames = React.useMemo(() => allCategories.map(cat => cat.name), [allCategories]);
+
+    const getLibraryCategoryForFile = React.useCallback((file: StickerFile) =>
+        allCategories.find(cat => cat.files.some(f => f.id === file.id))?.name,
+        [allCategories]);
+
+    const commonProps = React.useMemo(() => ({
+        guildId: guildId!,
+        channel,
+        closePopout: rootProps.onClose,
+        favoriteIds,
+        onToggleFavorite: handleToggleFavorite,
+        onStickerSent: handleStickerSent,
+        onCategoryRename: handleCategoryRename,
+        onStickerRename: handleStickerRename,
+        onStickerDelete: handleStickerDelete,
+        onStickerTagsEdit: handleStickerTagsEdit,
+        isClosing,
+        onMoveSticker: handleMoveSticker,
+        allCategories: allCategoryNames,
+        draggedStickerId,
+        onStickerDragStart: handleStickerDragStart,
+        onStickerDragEnd: handleStickerDragEnd,
+        onStickerDrop: handleStickerDrop,
+        onStickerDragOver: handleStickerDragOver,
+    }), [
+        guildId, channel, rootProps.onClose, favoriteIds, handleToggleFavorite,
+        handleStickerSent, handleCategoryRename, handleStickerRename, handleStickerDelete,
+        handleStickerTagsEdit, isClosing, handleMoveSticker, allCategoryNames, draggedStickerId,
+        handleStickerDragStart, handleStickerDragEnd, handleStickerDrop, handleStickerDragOver,
+    ]);
+
     const renderContent = () => {
         if (isClosing) {
             return null;
@@ -1418,28 +1451,6 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
                 </div>
             );
 
-        const allCategoryNames = allCategories.map(cat => cat.name);
-
-        const commonProps = {
-            guildId,
-            channel,
-            closePopout: rootProps.onClose,
-            favoriteIds,
-            onToggleFavorite: handleToggleFavorite,
-            onStickerSent: handleStickerSent,
-            onCategoryRename: handleCategoryRename,
-            onStickerRename: handleStickerRename,
-            onStickerDelete: handleStickerDelete,
-            onStickerTagsEdit: handleStickerTagsEdit,
-            isClosing,
-            onMoveSticker: handleMoveSticker,
-            allCategories: allCategoryNames,
-            draggedStickerId,
-            onStickerDragStart: handleStickerDragStart,
-            onStickerDragEnd: handleStickerDragEnd,
-            onStickerDrop: handleStickerDrop,
-            onStickerDragOver: handleStickerDragOver,
-        };
         const isSearching = !!searchQuery;
 
         return (
@@ -1456,9 +1467,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
                             storageKey={FAVORITES_EXPANDED_KEY}
                             isInitiallyLoaded={true}
                             stickerDragCategoryId={!isSearching ? FAVORITES_CATEGORY_ID : undefined}
-                            getLibraryCategoryForFile={file =>
-                                allCategories.find(cat => cat.files.some(f => f.id === file.id))?.name
-                            }
+                            getLibraryCategoryForFile={getLibraryCategoryForFile}
                             {...commonProps}
                         />
                     )}
