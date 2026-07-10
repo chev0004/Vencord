@@ -48,11 +48,6 @@ import {
     applyCategoryOrder,
     evictStickerImage,
     FAVORITES_EXPANDED_KEY,
-    getCachedExpansion,
-    getCachedFavorites,
-    getCachedLibrary,
-    getCachedOrder,
-    getCachedRecents,
     getCachedStickerImage,
     getCategoryOrder,
     getExpansionState,
@@ -159,11 +154,6 @@ const getAccountGuildEntry = () => {
     if (!userId) return null;
     settings.store.accountGuilds ??= {};
     return settings.store.accountGuilds[userId] ?? null;
-};
-
-const getKnownGuildId = (): string | null => {
-    const entry = getAccountGuildEntry();
-    return entry && GuildStore.getGuild(entry.guildId) ? entry.guildId : null;
 };
 
 const ensureStickerGuild = async (): Promise<string | null> => {
@@ -1008,14 +998,13 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
     rootProps,
     channel,
 }) => {
-    const [allCategories, setAllCategories] = React.useState<StickerCategory[]>(() => {
-        const cached = getCachedLibrary();
-        return cached ? applyCategoryOrder(cached, getCachedOrder() ?? []) : [];
-    });
-    const [favoriteIds, setFavoriteIds] = React.useState<Set<string>>(() => new Set(getCachedFavorites() ?? []));
-    const [recentIds, setRecentIds] = React.useState<string[]>(() => getCachedRecents() ?? []);
-    const [guildId, setGuildIdState] = React.useState<string | null>(getKnownGuildId);
-    const [isLoading, setIsLoading] = React.useState(() => getCachedLibrary() === null || getKnownGuildId() === null);
+    const [allCategories, setAllCategories] = React.useState<StickerCategory[]>(
+        [],
+    );
+    const [favoriteIds, setFavoriteIds] = React.useState<Set<string>>(new Set());
+    const [recentIds, setRecentIds] = React.useState<string[]>([]);
+    const [guildId, setGuildIdState] = React.useState<string | null>(null);
+    const [isLoading, setIsLoading] = React.useState(true);
     const [hasStartedLoading, setHasStartedLoading] = React.useState(false);
     const [searchQuery, setSearchQuery] = React.useState("");
     const [draggedCategoryIndex, setDraggedCategoryIndex] = React.useState<number | null>(null);
@@ -1023,11 +1012,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
     const draggedStickerSourceRef = React.useRef<string | null>(null);
     const draggedStickerIndexRef = React.useRef<number | null>(null);
 
-    const initialExpansionState = React.useRef<Record<string, boolean>>({
-        [FAVORITES_EXPANDED_KEY]: getCachedExpansion(FAVORITES_EXPANDED_KEY) ?? true,
-        [RECENT_EXPANDED_KEY]: getCachedExpansion(RECENT_EXPANDED_KEY) ?? true,
-    });
-    const skipLoadRef = React.useRef(getCachedLibrary() !== null && getKnownGuildId() !== null);
+    const initialExpansionState = React.useRef<Record<string, boolean>>({});
     const isClosingRef = React.useRef(false);
 
     const isClosing = rootProps.transitionState === 2;
@@ -1094,7 +1079,7 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
 
         if (rootProps.transitionState === 1 && !hasStartedLoading) {
             setHasStartedLoading(true);
-            if (!skipLoadRef.current) loadStickerData();
+            loadStickerData();
         }
     }, [rootProps.transitionState, hasStartedLoading, isClosing]);
 
