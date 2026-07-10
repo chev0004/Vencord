@@ -6,8 +6,8 @@
 
 export const translations = {
     "en": {
-        "STICKERS": "Unlimited Sticker Picker",
-        "OPEN_LOCAL_STICKER_PICKER": "Open Unlimited Sticker Picker",
+        "STICKERS": "Unlimited Stickers",
+        "OPEN_LOCAL_STICKER_PICKER": "Open Unlimited Stickers",
         "STICKER_GUILD_CREATED_TITLE": "Sticker Guild Created",
         "STICKER_GUILD_CREATED_BODY": "The 'Stickers' guild has been created for your local stickers. If you don't see it, restart Discord.",
         "STICKER_GUILD_CREATE_FAILED_BODY": "Failed to create the sticker guild. Check console.",
@@ -41,8 +41,8 @@ export const translations = {
         "TAGS_PLACEHOLDER": "Comma-separated tags, e.g. なく, cry"
     },
     "ja": {
-        "STICKERS": "無限スタンプパネル",
-        "OPEN_LOCAL_STICKER_PICKER": "無限スタンプパネルを開く",
+        "STICKERS": "無限スタンプ",
+        "OPEN_LOCAL_STICKER_PICKER": "無限スタンプを開く",
         "STICKER_GUILD_CREATED_TITLE": "スタンプサーバーが作成されました",
         "STICKER_GUILD_CREATED_BODY": "無限スタンプ用に「Stickers」サーバーが作成されました。表示されない場合は、Discordを再起動してください。",
         "STICKER_GUILD_CREATE_FAILED_BODY": "スタンプサーバーの作成に失敗しました。コンソールを確認してください。",
