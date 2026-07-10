@@ -10,6 +10,7 @@ import * as DataStore from "@api/DataStore";
 import { DeleteIcon } from "@components/Icons";
 import { Divider, Heading } from "@components/index";
 import { getIntlMessage } from "@utils/discord";
+import { LazyComponent } from "@utils/lazyReact";
 import { Logger } from "@utils/Logger";
 import { classes } from "@utils/misc";
 import {
@@ -424,7 +425,7 @@ const EditTagsModal: React.FC<{
     );
 };
 
-const StickerGridItem = React.memo<{
+interface StickerGridItemProps {
     file: StickerFile;
     guildId: string;
     channel: Channel;
@@ -447,7 +448,9 @@ const StickerGridItem = React.memo<{
     stickerIndex?: number;
     onStickerDragOver?: (categoryName: string, targetIndex: number) => void;
     anyDragging?: boolean;
-}>(({
+}
+
+const StickerGridItem = LazyComponent<StickerGridItemProps>(() => React.memo(({
     file,
     guildId,
     channel,
@@ -470,7 +473,7 @@ const StickerGridItem = React.memo<{
     stickerIndex,
     onStickerDragOver,
     anyDragging = false,
-}) => {
+}: StickerGridItemProps) => {
         const [isSending, setIsSending] = React.useState(false);
         const [imageUrl, setImageUrl] = React.useState<string | null>(() => getCachedStickerImage(file.id)?.url ?? null);
         const blobRef = React.useRef<Blob | null>(getCachedStickerImage(file.id)?.blob ?? null);
@@ -726,7 +729,7 @@ const StickerGridItem = React.memo<{
                 )}
             </Tooltip>
         );
-    });
+    }));
 
 interface StickerCategoryWrapperProps {
     categoryName: string;
@@ -762,7 +765,7 @@ interface StickerCategoryWrapperProps {
     getLibraryCategoryForFile?: (file: StickerFile) => string | undefined;
 }
 
-const StickerCategoryWrapper = React.memo<StickerCategoryWrapperProps>(({
+const StickerCategoryWrapper = LazyComponent<StickerCategoryWrapperProps>(() => React.memo(({
     initialIsExpanded,
     storageKey,
     categoryName,
@@ -786,7 +789,7 @@ const StickerCategoryWrapper = React.memo<StickerCategoryWrapperProps>(({
     stickerDragCategoryId,
     getLibraryCategoryForFile,
     ...rest
-}) => {
+}: StickerCategoryWrapperProps) => {
     const [isExpanded, setIsExpanded] = React.useState(initialIsExpanded);
     const [isContentLoaded, setIsContentLoaded] =
         React.useState(isInitiallyLoaded);
@@ -994,7 +997,7 @@ const StickerCategoryWrapper = React.memo<StickerCategoryWrapperProps>(({
             )}
         </div>
     );
-});
+}));
 
 interface StickerPickerModalProps {
     rootProps: ModalProps;
