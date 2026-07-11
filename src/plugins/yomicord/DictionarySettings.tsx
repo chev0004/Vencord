@@ -9,9 +9,9 @@ import { Divider } from "@components/Divider";
 import { Heading } from "@components/Heading";
 import { Paragraph } from "@components/Paragraph";
 import { Span } from "@components/Span";
-import { TextInput, Toasts, useEffect, useState } from "@webpack/common";
+import { Alerts, TextInput, Toasts, useEffect, useRef, useState } from "@webpack/common";
 
-import { deleteDictionary, getDictionaryPriorities, getInstalledDictionaries, importDictionaryJSON, importMultipleDictionaryFiles, updateDictionaryPriority, type ProgressCallback } from "./dictionary";
+import { deleteDictionary, getDictionaryPriorities, getInstalledDictionaries, importMultipleDictionaryFiles, updateDictionaryPriority } from "./dictionary";
 
 export function DictionarySettings() {
     const [dictionaries, setDictionaries] = useState<string[]>([]);
@@ -19,6 +19,7 @@ export function DictionarySettings() {
     const [dictionaryName, setDictionaryName] = useState("JMdict");
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState<{ current: number; total: number; stage: string; } | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const loadDictionaries = async () => {
         const [dicts, prio] = await Promise.all([getInstalledDictionaries(), getDictionaryPriorities()]);
@@ -31,51 +32,31 @@ export function DictionarySettings() {
     }, []);
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const files = e.target.files;
+        const { files } = e.target;
         if (!files || files.length === 0) return;
 
         setUploading(true);
         setProgress({ current: 0, total: 100, stage: "Starting..." });
 
-        const onProgress: ProgressCallback = (current, total, stage) => {
-            setProgress({ current, total, stage });
-        };
-
         try {
-            if (files.length === 1) {
-                // Single file upload
-                const result = await importDictionaryJSON(files[0], dictionaryName, onProgress);
-                if (result.success) {
-                    Toasts.show({
-                        message: `Dictionary "${dictionaryName}" imported successfully!`,
-                        id: Toasts.genId(),
-                        type: Toasts.Type.SUCCESS
-                    });
-                    await loadDictionaries();
-                } else {
-                    Toasts.show({
-                        message: `Failed to import: ${result.error}`,
-                        id: Toasts.genId(),
-                        type: Toasts.Type.FAILURE
-                    });
-                }
+            const result = await importMultipleDictionaryFiles(
+                Array.from(files),
+                dictionaryName,
+                (current, total, stage) => setProgress({ current, total, stage })
+            );
+            if (result.success) {
+                Toasts.show({
+                    message: `Imported ${result.imported} file(s) into "${dictionaryName}"`,
+                    id: Toasts.genId(),
+                    type: Toasts.Type.SUCCESS
+                });
+                await loadDictionaries();
             } else {
-                // Multiple files upload
-                const result = await importMultipleDictionaryFiles(Array.from(files), dictionaryName, onProgress);
-                if (result.success) {
-                    Toasts.show({
-                        message: `Imported ${result.imported} file(s) into "${dictionaryName}"`,
-                        id: Toasts.genId(),
-                        type: Toasts.Type.SUCCESS
-                    });
-                    await loadDictionaries();
-                } else {
-                    Toasts.show({
-                        message: `Failed to import: ${result.error}`,
-                        id: Toasts.genId(),
-                        type: Toasts.Type.FAILURE
-                    });
-                }
+                Toasts.show({
+                    message: `Failed to import: ${result.error}`,
+                    id: Toasts.genId(),
+                    type: Toasts.Type.FAILURE
+                });
             }
         } catch (error) {
             Toasts.show({
@@ -85,19 +66,27 @@ export function DictionarySettings() {
             });
         } finally {
             setUploading(false);
-            setTimeout(() => setProgress(null), 2000); // Clear progress after 2 seconds
-            e.target.value = ""; // Reset input
+            setTimeout(() => setProgress(null), 2000);
+            e.target.value = "";
         }
     };
 
-    const handleDelete = async (name: string) => {
-        await deleteDictionary(name);
-        Toasts.show({
-            message: `Dictionary "${name}" deleted`,
-            id: Toasts.genId(),
-            type: Toasts.Type.SUCCESS
+    const handleDelete = (name: string) => {
+        Alerts.show({
+            title: "Delete Dictionary",
+            body: `Delete "${name}" and all its imported data?`,
+            confirmText: "Delete",
+            cancelText: "Cancel",
+            onConfirm: async () => {
+                await deleteDictionary(name);
+                Toasts.show({
+                    message: `Dictionary "${name}" deleted`,
+                    id: Toasts.genId(),
+                    type: Toasts.Type.SUCCESS
+                });
+                await loadDictionaries();
+            }
         });
-        await loadDictionaries();
     };
 
     const handlePriorityChange = async (name: string, value: string) => {
@@ -126,22 +115,20 @@ export function DictionarySettings() {
 
                 <div style={{ marginBottom: "20px" }}>
                     <input
+                        ref={fileInputRef}
                         type="file"
                         accept=".json"
                         multiple
                         onChange={handleFileUpload}
                         style={{ display: "none" }}
-                        id="dictionary-upload"
                     />
-                    <label htmlFor="dictionary-upload">
-                        <Button
-                            disabled={uploading || !dictionaryName.trim()}
-                            onClick={() => document.getElementById("dictionary-upload")?.click()}
-                            size="small"
-                        >
-                            {uploading ? "Importing..." : "Select JSON File(s)"}
-                        </Button>
-                    </label>
+                    <Button
+                        disabled={uploading || !dictionaryName.trim()}
+                        onClick={() => fileInputRef.current?.click()}
+                        size="small"
+                    >
+                        {uploading ? "Importing..." : "Select JSON File(s)"}
+                    </Button>
                     <Span style={{ marginTop: "8px", fontSize: "0.9em", color: "var(--text-muted)" }}>
                         You can select multiple term_bank files at once
                     </Span>
@@ -238,7 +225,7 @@ export function DictionarySettings() {
             <section style={{ marginTop: "20px" }}>
                 <Heading tag="h5">How to Get Dictionaries</Heading>
                 <Paragraph>
-                    1. Download a Yomichan dictionary (e.g., JMdict) from <a href="https://github.com/themoeway/jmdict-yomitan" target="_blank">here</a><br />
+                    1. Download a Yomichan dictionary (e.g., JMdict) from <a href="https://github.com/themoeway/jmdict-yomitan" target="_blank" rel="noreferrer">here</a><br />
                     2. Extract the ZIP file<br />
                     3. Upload the term_bank_*.json files using the button above<br />
                     4. You can upload multiple files at once!
@@ -247,4 +234,3 @@ export function DictionarySettings() {
         </div>
     );
 }
-

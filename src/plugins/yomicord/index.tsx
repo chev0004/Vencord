@@ -11,11 +11,11 @@ import { Devs } from "@utils/constants";
 import { Logger } from "@utils/Logger";
 import definePlugin, { OptionType } from "@utils/types";
 import { findByCodeLazy } from "@webpack";
-import { React, createRoot, scrollerClasses } from "@webpack/common";
+import { createRoot, React, scrollerClasses } from "@webpack/common";
 
+import { cleanupOrphanedDictionaryKeys, type DictionaryEntry, getDictionaryPriorities, lookupTerm, sortDictionariesByPriority } from "./dictionary";
 import { DictionarySettings } from "./DictionarySettings";
-import { cleanupOrphanedDictionaryKeys, getDictionaryPriorities, lookupTerm, sortDictionariesByPriority } from "./dictionary";
-import { getTextCandidates } from "./textScanner";
+import { getTextAtPoint } from "./textScanner";
 import { normalizeDefinition } from "./utils";
 
 const logger = new Logger("Yomicord");
@@ -59,806 +59,282 @@ const settings = definePluginSettings({
     }
 });
 
-const tooltips = new Map<number, { container: HTMLDivElement; header: HTMLDivElement; content: HTMLDivElement; }>();
-let isKeyPressed = false;
-let currentText: string | null = null;
-let lastTooltipPosition: { x: number; y: number; } | null = null;
-const lastTooltipPositionsByLevel = new Map<number, { x: number; y: number; }>();
-
-// Debouncing and cancellation
-let mouseMoveTimeout: number | null = null;
-let pendingLookupAborted = false;
-let globalClickHandler: ((e: MouseEvent) => void) | null = null;
-
-function createTooltip(popupLevel: number = 0): { container: HTMLDivElement; header: HTMLDivElement; content: HTMLDivElement; } {
-    const tooltip = document.createElement("div");
-    tooltip.className = "yomicord-tooltip";
-    tooltip.setAttribute("data-popup-level", popupLevel.toString());
-    tooltip.style.cssText = `
-        position: fixed;
-        background: rgb(24, 25, 28);
-        border: 1px solid var(--background-modifier-accent);
-        border-radius: 8px;
-        color: var(--text-muted);
-        font-family: var(--font-primary);
-        pointer-events: auto;
-        z-index: ${10000 + popupLevel};
-        display: none;
-        max-width: 450px;
-        max-height: 70vh;
-        box-shadow: var(--elevation-high);
-        transition: opacity 0.15s ease;
-        opacity: 1;
-        overflow: hidden;
-        cursor: default;
-    `;
-
-    // Create header with dictionary tabs and buttons
-    const header = document.createElement("div");
-    header.style.cssText = `
-        display: flex;
-        align-items: center;
-        padding: 8px 12px;
-        border-bottom: 1px solid var(--background-modifier-accent);
-        background: var(--background-secondary);
-        gap: 8px;
-    `;
-
-    // Dictionary tabs container
-    const tabsContainer = document.createElement("div");
-    tabsContainer.style.cssText = `
-        flex: 1;
-        display: flex;
-        gap: 4px;
-        overflow-x: auto;
-        overflow-y: hidden;
-        scrollbar-width: none;
-        -ms-overflow-style: none;
-    `;
-    tabsContainer.setAttribute("data-tabs-container", "true");
-    // Hide scrollbar
-    tabsContainer.addEventListener("wheel", (e) => {
-        if (e.deltaY !== 0) {
-            tabsContainer.scrollLeft += e.deltaY;
-        }
-    });
-    header.appendChild(tabsContainer);
-
-    // Close button
-    const closeButton = document.createElement("button");
-    closeButton.innerHTML = "✕";
-    closeButton.style.cssText = `
-        width: 24px;
-        height: 24px;
-        border: none;
-        background: transparent;
-        color: var(--text-muted);
-        font-size: 16px;
-        line-height: 1;
-        cursor: pointer;
-        padding: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 4px;
-        transition: background-color 0.1s ease, color 0.1s ease;
-    `;
-    closeButton.onmouseenter = () => {
-        closeButton.style.backgroundColor = "var(--background-modifier-hover)";
-        closeButton.style.color = "var(--text-normal)";
-    };
-    closeButton.onmouseleave = () => {
-        closeButton.style.backgroundColor = "transparent";
-        closeButton.style.color = "var(--text-muted)";
-    };
-    closeButton.onclick = (e) => {
-        e.stopPropagation();
-        hideTooltipsAtLevel(popupLevel, "close button clicked");
-    };
-    header.appendChild(closeButton);
-    tooltip.appendChild(header);
-
-    // Create scrollable content container
-    const tooltipContent = document.createElement("div");
-    tooltipContent.style.cssText = `
-        padding: 12px 16px;
-        font-size: 15px;
-        line-height: 1.6;
-        word-wrap: break-word;
-        overflow-y: auto;
-        max-height: calc(70vh - 50px);
-    `;
-    const thin = scrollerClasses.thin;
-    if (thin) tooltipContent.className = thin;
-    tooltip.appendChild(tooltipContent);
-
-    document.body.appendChild(tooltip);
-    return { container: tooltip, header, content: tooltipContent };
+interface Tooltip {
+    container: HTMLDivElement;
+    header: HTMLDivElement;
+    tabs: HTMLDivElement;
+    content: HTMLDivElement;
+    removalTimeout: number | null;
+    reactRoot: ReturnType<typeof createRoot> | null;
+    lookupId: number;
+    anchor: { x: number; y: number; } | null;
 }
 
-function showTooltip(x: number, y: number, content: string | HTMLElement, popupLevel: number = 0, dictionaryName?: string, dictionaries?: string[], onSwapDictionary?: (dictName: string) => void) {
-    // Get existing tooltip first
-    let tooltip = tooltips.get(popupLevel);
-    const isUpdating = !!tooltip;
+const tooltips = new Map<number, Tooltip>();
+let currentText: string | null = null;
+let lookupSeq = 0;
+let mouseMoveTimeout: number | null = null;
 
-    // If we're updating an existing tooltip, cancel any pending removal
-    if (isUpdating && tooltip) {
-        const container = tooltip.container;
-        const existingTimeout = (container as any)._removalTimeout;
-        if (existingTimeout) {
-            clearTimeout(existingTimeout);
-            (container as any)._removalTimeout = null;
+const SCAN_KEY_NAMES: Record<string, string> = { alt: "Alt", ctrl: "Control", shift: "Shift" };
+
+function isScanKeyPressed(e: MouseEvent): boolean {
+    switch (settings.store.scanKey) {
+        case "ctrl": return e.ctrlKey;
+        case "shift": return e.shiftKey;
+        default: return e.altKey;
+    }
+}
+
+function createTooltip(level: number): Tooltip {
+    const container = document.createElement("div");
+    container.className = "yomicord-tooltip";
+    container.setAttribute("data-popup-level", String(level));
+    container.style.zIndex = String(10000 + level);
+    container.addEventListener("mousedown", () => hideTooltipsAtLevel(level + 1));
+
+    const header = document.createElement("div");
+    header.className = "yomicord-header";
+
+    const tabs = document.createElement("div");
+    tabs.className = "yomicord-tabs";
+    tabs.addEventListener("wheel", e => {
+        if (e.deltaY !== 0) tabs.scrollLeft += e.deltaY;
+    });
+
+    const closeButton = document.createElement("button");
+    closeButton.className = "yomicord-close";
+    closeButton.textContent = "✕";
+    closeButton.onclick = e => {
+        e.stopPropagation();
+        hideTooltipsAtLevel(level);
+    };
+
+    header.append(tabs, closeButton);
+
+    const content = document.createElement("div");
+    content.className = `yomicord-content ${scrollerClasses.thin ?? ""}`;
+
+    container.append(header, content);
+    document.body.appendChild(container);
+
+    return { container, header, tabs, content, removalTimeout: null, reactRoot: null, lookupId: 0, anchor: null };
+}
+
+function showTooltip(x: number, y: number, content: string | HTMLElement, level: number, activeDict?: string, dictNames?: string[], onSwapDictionary?: (dict: string) => void) {
+    let tooltip = tooltips.get(level);
+    if (tooltip) {
+        if (tooltip.removalTimeout !== null) {
+            clearTimeout(tooltip.removalTimeout);
+            tooltip.removalTimeout = null;
         }
-        // Make sure it's visible
-        container.style.opacity = "1";
-        container.style.display = "block";
-    }
-
-    // Only hide tooltips at HIGHER levels (not same level or lower)
-    // If we're updating the same level, don't hide it - just update the content
-    if (popupLevel > 0 && !isUpdating) {
-        // Only hide tooltips at levels higher than this one
-        hideTooltipsAtLevel(popupLevel + 1, "showing tooltip at lower level");
-    } else if (popupLevel === 0 && !isUpdating) {
-        // Only hide tooltips at level 0 if we're creating a new one (not updating)
-        // This prevents flickering when updating content
-        hideTooltipsAtLevel(popupLevel, "creating new tooltip at level 0");
-    }
-
-    // Create new tooltip if it doesn't exist for this level
-    if (!tooltip) {
-        tooltip = createTooltip(popupLevel);
-        tooltips.set(popupLevel, tooltip);
-    }
-
-    const { container: tooltipContainer, header, content: tooltipContent } = tooltip;
-
-    // Reduced logging for performance
-    // logger.info(`[Tooltip] showTooltip called: popupLevel=${popupLevel}, isUpdating=${isUpdating}, dict=${dictionaryName || 'none'}`);
-
-    // Update header with tabs
-    const tabsContainer = header.querySelector('[data-tabs-container]') as HTMLElement;
-
-    if (tabsContainer) {
-        // Clear existing tabs
-        tabsContainer.innerHTML = "";
-
-        // Always show tabs if we have dictionaries (even if only one)
-        if (dictionaries && dictionaries.length > 0) {
-            // Create tabs for each dictionary
-            dictionaries.forEach((dictName) => {
-                const tab = document.createElement("button");
-                tab.textContent = dictName;
-                const isActive = dictName === dictionaryName;
-                tab.style.cssText = `
-                    padding: 4px 8px;
-                    border: none;
-                    background: ${isActive
-                        ? 'var(--background-modifier-accent)'
-                        : 'transparent'};
-                    border-radius: 4px;
-                    font-size: 12px;
-                    font-weight: ${isActive ? '500' : '400'};
-                    color: ${isActive
-                        ? 'var(--text-normal)'
-                        : 'var(--text-muted)'};
-                    cursor: ${dictionaries.length > 1 ? 'pointer' : 'default'};
-                    white-space: nowrap;
-                    transition: background-color 0.1s ease, color 0.1s ease;
-                    flex-shrink: 0;
-                `;
-
-                if (isActive) {
-                    tab.setAttribute("data-active-tab", "true");
-                }
-
-                tab.onmouseenter = () => {
-                    if (!isActive && dictionaries.length > 1) {
-                        tab.style.backgroundColor = "var(--background-modifier-hover)";
-                        tab.style.color = "var(--text-normal)";
-                    }
-                };
-
-                tab.onmouseleave = () => {
-                    if (!isActive) {
-                        tab.style.backgroundColor = "transparent";
-                        tab.style.color = "var(--text-muted)";
-                    }
-                };
-
-                if (onSwapDictionary && dictionaries.length > 1) {
-                    tab.onclick = (e) => {
-                        e.stopPropagation();
-                        onSwapDictionary(dictName);
-                    };
-                }
-
-                tabsContainer.appendChild(tab);
-            });
-        }
-    }
-
-    // Clear previous content
-    tooltipContent.innerHTML = "";
-
-    // Set new content
-    if (typeof content === "string") {
-        tooltipContent.textContent = content;
     } else {
-        tooltipContent.appendChild(content);
+        hideTooltipsAtLevel(level + 1);
+        tooltip = createTooltip(level);
+        tooltips.set(level, tooltip);
     }
 
-    // Check if this is a loading indicator and hide header if so
+    tooltip.tabs.innerHTML = "";
+    if (dictNames) {
+        const clickable = dictNames.length > 1;
+        for (const dictName of dictNames) {
+            const tab = document.createElement("button");
+            tab.className = "yomicord-tab";
+            tab.textContent = dictName;
+            if (dictName === activeDict) tab.classList.add("active");
+            else if (clickable) tab.classList.add("clickable");
+            if (clickable && onSwapDictionary) {
+                tab.onclick = e => {
+                    e.stopPropagation();
+                    onSwapDictionary(dictName);
+                };
+            }
+            tooltip.tabs.appendChild(tab);
+        }
+    }
+
+    tooltip.reactRoot?.unmount();
+    tooltip.reactRoot = null;
+    tooltip.content.innerHTML = "";
+    if (typeof content === "string") tooltip.content.textContent = content;
+    else tooltip.content.appendChild(content);
+
     const isLoading = content instanceof HTMLElement && content.classList.contains("yomicord-loading");
-    if (isLoading) {
-        header.style.display = "none";
-    } else {
-        header.style.display = "flex";
-    }
+    tooltip.header.style.display = isLoading ? "none" : "flex";
 
-    tooltipContainer.style.display = "block";
-    tooltipContainer.style.opacity = "1";
+    const { container } = tooltip;
+    container.style.display = "block";
+    container.style.opacity = "1";
 
-    // Position below and to the right of cursor
     let left = x + 15;
     let top = y + 15;
+    const rect = container.getBoundingClientRect();
+    if (left + rect.width > window.innerWidth - 10) left = x - rect.width - 15;
+    if (top + rect.height > window.innerHeight - 10) top = y - rect.height - 15;
+    container.style.left = `${Math.max(10, left)}px`;
+    container.style.top = `${Math.max(10, top)}px`;
+}
 
-    // Get tooltip dimensions after setting content
-    const rect = tooltipContainer.getBoundingClientRect();
-
-    // Adjust if tooltip goes off screen
-    if (left + rect.width > window.innerWidth - 10) {
-        left = x - rect.width - 15;
-    }
-    if (top + rect.height > window.innerHeight - 10) {
-        top = y - rect.height - 15;
-    }
-
-    // Keep it on screen
-    left = Math.max(10, left);
-    top = Math.max(10, top);
-
-    tooltipContainer.style.left = `${left}px`;
-    tooltipContainer.style.top = `${top}px`;
-
-    // Add click handler to this tooltip - clicking anywhere removes all child tooltips
-    const handleTooltipClick = (e: MouseEvent) => {
-        // Check if the click is inside this tooltip
-        const target = e.target as Element;
-        if (tooltipContainer.contains(target)) {
-            // Hide all tooltips at levels higher than this one
-            // (scanning happens on hover, not click, so this won't interfere)
-            hideTooltipsAtLevel(popupLevel + 1, "tooltip clicked (nested tooltips)");
-        }
-    };
-
-    // Remove any existing click handler first
-    const existingClickHandler = (tooltipContainer as any)._clickHandler;
-    if (existingClickHandler) {
-        tooltipContainer.removeEventListener("mousedown", existingClickHandler);
-    }
-
-    // Add click handler
-    (tooltipContainer as any)._clickHandler = handleTooltipClick;
-    tooltipContainer.addEventListener("mousedown", handleTooltipClick);
-
-    // Use a single global click handler instead of per-tooltip handlers
-    // This prevents accumulation of event listeners
-    if (!globalClickHandler) {
-        globalClickHandler = (e: MouseEvent) => {
-            // Only hide if click is outside all tooltips AND the scan key is not pressed
-            const scanKey = settings.store.scanKey;
-            let keyPressed = false;
-            switch (scanKey) {
-                case "alt":
-                    keyPressed = e.altKey;
-                    break;
-                case "ctrl":
-                    keyPressed = e.ctrlKey;
-                    break;
-                case "shift":
-                    keyPressed = e.shiftKey;
-                    break;
-            }
-
-            // Don't hide if the scan key is still pressed
-            if (keyPressed) {
-                return;
-            }
-
-            let clickedInsideAnyTooltip = false;
-            for (const { container } of tooltips.values()) {
-                if (container.contains(e.target as Node)) {
-                    clickedInsideAnyTooltip = true;
-                    break;
-                }
-            }
-            if (!clickedInsideAnyTooltip) {
-                hideAllTooltips("click outside tooltip");
-            }
-        };
-        document.addEventListener("mousedown", globalClickHandler);
+function hideTooltipsAtLevel(level: number) {
+    for (const [tooltipLevel, tooltip] of tooltips) {
+        if (tooltipLevel < level) continue;
+        if (tooltip.removalTimeout !== null) clearTimeout(tooltip.removalTimeout);
+        tooltip.container.style.opacity = "0";
+        tooltip.removalTimeout = window.setTimeout(() => {
+            tooltip.reactRoot?.unmount();
+            tooltip.reactRoot = null;
+            tooltips.delete(tooltipLevel);
+            tooltip.container.remove();
+        }, 100);
     }
 }
 
-function hideTooltipsAtLevel(level: number, reason: string = "unknown") {
-    // Hide all tooltips at this level or higher
-    for (const [tooltipLevel, { container }] of tooltips.entries()) {
-        if (tooltipLevel >= level) {
-            // Cancel any pending removal timeout
-            const existingTimeout = (container as any)._removalTimeout;
-            if (existingTimeout) {
-                clearTimeout(existingTimeout);
-                (container as any)._removalTimeout = null;
-            }
-
-            // Remove event handlers
-            const clickHandler = (container as any)._clickHandler;
-            if (clickHandler) {
-                container.removeEventListener("mousedown", clickHandler);
-                (container as any)._clickHandler = null;
-            }
-
-            container.style.opacity = "0";
-            const timeout = setTimeout(() => {
-                // Unmount any React roots before removing
-                const reactRoot = (container as any)._reactRoot;
-                if (reactRoot) {
-                    reactRoot.unmount();
-                    (container as any)._reactRoot = null;
-                }
-                container.style.display = "none";
-                tooltips.delete(tooltipLevel);
-                container.remove();
-            }, 100);
-            (container as any)._removalTimeout = timeout;
-        }
-    }
+function hideAllTooltips() {
+    lookupSeq++;
+    hideTooltipsAtLevel(0);
 }
 
-function hideAllTooltips(reason: string = "unknown") {
-    // Abort any pending lookup
-    pendingLookupAborted = true;
-
-    // Remove all event handlers first
-    for (const { container } of tooltips.values()) {
-        const clickHandler = (container as any)._clickHandler;
-        if (clickHandler) {
-            container.removeEventListener("mousedown", clickHandler);
-            (container as any)._clickHandler = null;
-        }
-        container.style.opacity = "0";
-    }
-    setTimeout(() => {
-        for (const { container } of tooltips.values()) {
-            // Unmount any React roots before removing
-            const reactRoot = (container as any)._reactRoot;
-            if (reactRoot) {
-                reactRoot.unmount();
-                (container as any)._reactRoot = null;
-            }
-            container.style.display = "none";
-            container.remove();
-        }
-        tooltips.clear();
-        lastTooltipPosition = null;
-        lastTooltipPositionsByLevel.clear();
-    }, 100);
-}
-
-
-/**
- * Checks if an element is inside a Yomicord tooltip
- */
 function isInsideTooltip(element: Element | null): { isInside: boolean; popupLevel: number; } {
-    if (!element) return { isInside: false, popupLevel: 0 };
-
-    let current: Element | null = element;
-    let maxLevel = 0;
-
-    while (current) {
-        if (current.classList.contains("yomicord-tooltip") || current.getAttribute("data-popup-level") !== null) {
-            const level = parseInt(current.getAttribute("data-popup-level") || "0", 10);
-            maxLevel = Math.max(maxLevel, level);
-            return { isInside: true, popupLevel: maxLevel + 1 };
-        }
-        current = current.parentElement;
-    }
-
-    return { isInside: false, popupLevel: 0 };
+    const tooltip = element?.closest(".yomicord-tooltip");
+    if (!tooltip) return { isInside: false, popupLevel: 0 };
+    return { isInside: true, popupLevel: parseInt(tooltip.getAttribute("data-popup-level") ?? "0", 10) + 1 };
 }
 
-/**
- * Checks if the element is a main entry word (term or reading) that should not be scannable
- */
-function isMainEntryWord(element: Element | null): boolean {
-    if (!element) return false;
-
-    let current: Element | null = element;
-    while (current) {
-        // Check if this element has the data attribute marking it as a main entry (term or reading)
-        if (current.getAttribute("data-yomicord-entry") === "true") {
-            return true;
-        }
-        // Stop checking if we've left the tooltip
-        if (current.classList.contains("yomicord-tooltip")) {
-            break;
-        }
-        current = current.parentElement;
-    }
-
-    return false;
-}
-
-// Debounced mouse move handler
 function handleMouseMove(e: MouseEvent) {
-    // Clear any pending mouse move handler
-    if (mouseMoveTimeout !== null) {
-        clearTimeout(mouseMoveTimeout);
-        mouseMoveTimeout = null;
-    }
-
-    // Debounce: wait 50ms before processing
-    // This prevents rapid-fire scans when mouse moves quickly
+    if (mouseMoveTimeout !== null) clearTimeout(mouseMoveTimeout);
     mouseMoveTimeout = window.setTimeout(() => {
         mouseMoveTimeout = null;
-        handleMouseMoveDebounced(e);
+        void handleMouseMoveDebounced(e);
     }, 50);
 }
 
 async function handleMouseMoveDebounced(e: MouseEvent) {
-    // Abort any previous lookup that might still be pending
-    pendingLookupAborted = false;
-
-    // Check if we're hovering over a tooltip FIRST, before any other logic
     const target = document.elementFromPoint(e.clientX, e.clientY);
     const { isInside, popupLevel } = isInsideTooltip(target);
 
-    // Verify the key is actually pressed by checking the event (needed for inside-tooltip checks)
-    const scanKey = settings.store.scanKey;
-    let keyActuallyPressed = false;
-
-    switch (scanKey) {
-        case "alt":
-            keyActuallyPressed = e.altKey;
-            break;
-        case "ctrl":
-            keyActuallyPressed = e.ctrlKey;
-            break;
-        case "shift":
-            keyActuallyPressed = e.shiftKey;
-            break;
-    }
-
-    // If we're hovering over a tooltip, handle it specially
     if (isInside) {
-        // If scanning popup content is disabled, completely ignore mouse moves over tooltips
-        if (!settings.store.scanPopupContent) {
-            return; // Don't do anything, let tooltip stay visible
-        }
-
-        // Check if we've exceeded max nesting level
-        if (popupLevel > settings.store.maxPopupNesting) {
-            return; // Don't scan, but keep tooltip visible
-        }
-
-        // Prevent scanning main entry words (to avoid infinite loops)
-        if (isMainEntryWord(target)) {
-            return; // Don't scan, but keep tooltip visible
-        }
-
-        // If key is pressed and we're inside a tooltip, allow scanning to continue
-        // This enables scanning text within tooltips
-        if (!keyActuallyPressed) {
-            // Key not pressed, just protect the tooltip from being hidden
-            return;
-        }
-        // If we get here, key is pressed and we're inside a tooltip - continue with scanning
+        if (!settings.store.scanPopupContent) return;
+        if (popupLevel > settings.store.maxPopupNesting) return;
+        if (target?.closest('[data-yomicord-entry="true"]')) return;
     }
+    if (!isScanKeyPressed(e)) return;
 
-    // Key state already checked above if we're inside a tooltip
-
-    // Check if we have an active tooltip and are still near the original scan position
-    // For nested tooltips, check position relative to their level
-    const hasActiveTooltip = tooltips.size > 0;
     const currentLevel = isInside ? popupLevel - 1 : 0;
-    const lastPosForLevel = lastTooltipPositionsByLevel.get(currentLevel) || lastTooltipPosition;
-    const isNearLastPosition = lastPosForLevel &&
-        Math.abs(e.clientX - lastPosForLevel.x) < 100 &&
-        Math.abs(e.clientY - lastPosForLevel.y) < 100;
-
-    // CRITICAL: If we're near where we showed the tooltip (but not inside it), protect it from being hidden
-    // If we're inside the tooltip, we already handled that above and only continue if key is pressed
-    if (hasActiveTooltip && isNearLastPosition && !isInside) {
-        // Only continue if key is pressed - allow re-scanning nearby text
-        if (keyActuallyPressed) {
-            // Allow scanning if key is pressed and we're not inside tooltip
-            // But we'll still protect against hiding below
-            // (Logging removed - too verbose on mouse move)
-        } else {
-            // Key not pressed, just protect the tooltip from being hidden
-            return;
-        }
+    let anchor = tooltips.get(currentLevel)?.anchor ?? null;
+    if (!anchor) {
+        for (const t of tooltips.values()) anchor = t.anchor ?? anchor;
     }
+    const isNearLastPosition = !!anchor && Math.abs(e.clientX - anchor.x) < 100 && Math.abs(e.clientY - anchor.y) < 100;
 
-    // Update our internal state to match reality
-    if (!keyActuallyPressed && isKeyPressed) {
-        // Key state is out of sync - reset it
-        isKeyPressed = false;
-        currentText = null;
-        // Only hide tooltip if we're not hovering over it AND not near the position
+    const scanned = getTextAtPoint(e.clientX, e.clientY, isInside ? 25 : 15);
+    if (!scanned) {
         if (!isInside && !isNearLastPosition) {
-            hideAllTooltips("key released");
-            lastTooltipPosition = null;
-        }
-    }
-
-    // Only scan when key is actually pressed
-    if (!keyActuallyPressed) {
-        return; // Don't hide tooltip - let it stay visible
-    }
-
-    // Update internal state
-    if (!isKeyPressed) {
-        isKeyPressed = true;
-    }
-
-    // Get text candidates - progressively longer strings from cursor position
-    // Use a larger radius when tooltip is visible to avoid issues
-    // This now also returns the rect to avoid redundant DOM lookups
-    const radius = isInside ? 25 : 15;
-    const candidatesResult = getTextCandidates(e.clientX, e.clientY, radius);
-
-    if (!candidatesResult || candidatesResult.candidates.length === 0) {
-        // Only hide tooltip if we're not inside a tooltip and not hovering over it
-        // Also don't hide if we're still near the last tooltip position
-        if (!isInside && !isNearLastPosition) {
-            hideAllTooltips("no text candidates found");
+            hideAllTooltips();
             currentText = null;
-            lastTooltipPosition = null;
-            lastTooltipPositionsByLevel.delete(currentLevel);
-        } else {
-            // (Logging removed - too verbose)
         }
         return;
     }
 
-    const { candidates, rect } = candidatesResult;
+    if (scanned.text === currentText && (isInside || isNearLastPosition)) return;
+    currentText = scanned.text;
 
-    // Use the longest candidate as cache key
-    const longestText = candidates[candidates.length - 1].text;
+    const level = isInside ? popupLevel : 0;
+    const myLookup = ++lookupSeq;
+    const loading = createLoadingIndicator();
+    showTooltip(scanned.rect.left, scanned.rect.bottom, loading.element, level);
 
-    // Debounce: if we're scanning the same text, don't re-process immediately
-    // This prevents redundant searches when mouse moves slightly
-    if (longestText === currentText) {
-        // If we're inside a tooltip or near the last position, don't re-search
-        if (isInside || isNearLastPosition) {
-            return;
-        }
-        // For same text outside tooltip, allow re-search but with a small delay check
-        // (the cache will handle this efficiently)
-    }
-    currentText = longestText;
+    const tooltip = tooltips.get(level)!;
+    tooltip.reactRoot = loading.root;
+    tooltip.lookupId = myLookup;
+    tooltip.anchor = { x: e.clientX, y: e.clientY };
 
-    // Use the rect from candidatesResult instead of calling getTextAtPoint again
-    const result = { text: longestText, rect };
+    const entries = await lookupTerm(scanned.text);
 
-    // Show loading indicator immediately
-    const newPopupLevel = isInside ? popupLevel : 0;
-    let tooltip = tooltips.get(newPopupLevel);
-    if (!tooltip) {
-        tooltip = createTooltip(newPopupLevel);
-        tooltips.set(newPopupLevel, tooltip);
-    }
-
-    // Show loading state
-    const loadingIndicator = createLoadingIndicator();
-    showTooltip(
-        result.rect.left,
-        result.rect.bottom,
-        loadingIndicator,
-        newPopupLevel,
-        undefined,
-        [],
-        undefined
-    );
-
-    // Store position for tooltip
-    lastTooltipPosition = { x: e.clientX, y: e.clientY };
-    lastTooltipPositionsByLevel.set(newPopupLevel, { x: e.clientX, y: e.clientY });
-
-    // lookupTerm already does progressive shortening internally
-    // Just call it once with the longest text
-    // (Logging removed for performance - only log if no results found)
-    const entries = await lookupTerm(longestText);
-
-    // Check if this lookup was aborted (mouse moved to new position)
-    if (pendingLookupAborted) {
-        // Hide loading indicator if lookup was aborted
-        if (tooltip && tooltip.container.querySelector('.yomicord-loading')) {
-            hideAllTooltips("lookup aborted");
-            lastTooltipPosition = null;
-            lastTooltipPositionsByLevel.delete(newPopupLevel);
-        }
+    if (myLookup !== lookupSeq) {
+        if (tooltips.get(level)?.lookupId === myLookup) hideAllTooltips();
         return;
     }
 
     if (entries.length === 0) {
-        logger.info(`No results found for: "${longestText}"`);
+        logger.info(`No results found for: "${scanned.text}"`);
+        hideTooltipsAtLevel(level);
+        return;
     }
 
-    if (entries.length > 0) {
-        // Found a dictionary match!
-        // Group entries by dictionary
-        const entriesByDict = new Map<string, typeof entries>();
-        for (const entry of entries) {
-            const dictName = entry.dictionary || "Unknown";
-            if (!entriesByDict.has(dictName)) {
-                entriesByDict.set(dictName, []);
-            }
-            entriesByDict.get(dictName)!.push(entry);
-        }
-
-        let dictionaries = Array.from(entriesByDict.keys());
-        const priorities = await getDictionaryPriorities();
-        dictionaries = sortDictionariesByPriority(dictionaries, priorities);
-        const matchedTerm = entries[0].term;
-
-        // Tooltip already exists from loading state
-        // Reduced logging for performance - only log once per unique term
-        if (!(tooltip.container as any)._lastMatchedTerm || (tooltip.container as any)._lastMatchedTerm !== matchedTerm) {
-            logger.info(`Matched term: "${matchedTerm}", found dictionaries: ${dictionaries.join(", ")}, total entries: ${entries.length}`);
-
-            // Log what each dictionary found
-            for (const dictName of dictionaries) {
-                const dictEntries = entriesByDict.get(dictName)!;
-                const entryTerms = dictEntries.map(e => `${e.term}【${e.reading || ''}】`).join(", ");
-                logger.info(`  Dictionary "${dictName}" found ${dictEntries.length} entries: ${entryTerms}`);
-            }
-
-            (tooltip.container as any)._lastMatchedTerm = matchedTerm;
-        }
-
-        // Store dictionary data on the tooltip container
-        (tooltip.container as any)._dictData = {
-            entriesByDict,
-            dictionaries,
-            matchedTerm,
-            result,
-            popupLevel: newPopupLevel,
-            mouseX: e.clientX,
-            mouseY: e.clientY
-        };
-
-        // Initial display - show first dictionary
-        let currentDictName = dictionaries[0];
-        let currentEntries = entriesByDict.get(currentDictName)!;
-        (tooltip.container as any)._currentDict = currentDictName;
-
-        const updateTooltip = (dictName: string) => {
-            const data = (tooltip!.container as any)._dictData;
-            const entries = data.entriesByDict.get(dictName);
-            if (!entries) return;
-
-            (tooltip!.container as any)._currentDict = dictName;
-            const content = formatDictionaryResults(data.matchedTerm, entries);
-
-            showTooltip(
-                data.result.rect.left,
-                data.result.rect.bottom,
-                content,
-                data.popupLevel,
-                dictName,
-                data.dictionaries,
-                (newDictName: string) => {
-                    updateTooltip(newDictName);
-                }
-            );
-        };
-
-        updateTooltip(currentDictName);
-    } else {
-        // No dictionary match - only hide if we're not inside a tooltip
-        if (!isInside) {
-            hideAllTooltips("no dictionary entries found");
-            lastTooltipPosition = null;
-            lastTooltipPositionsByLevel.delete(currentLevel);
-        }
+    const entriesByDict = new Map<string, DictionaryEntry[]>();
+    for (const entry of entries) {
+        const dictName = entry.dictionary || "Unknown";
+        let list = entriesByDict.get(dictName);
+        if (!list) entriesByDict.set(dictName, list = []);
+        list.push(entry);
     }
+
+    const priorities = await getDictionaryPriorities();
+    const dictNames = sortDictionariesByPriority([...entriesByDict.keys()], priorities);
+
+    const updateTooltip = (dictName: string) => {
+        const dictEntries = entriesByDict.get(dictName);
+        if (!dictEntries) return;
+        showTooltip(scanned.rect.left, scanned.rect.bottom, formatDictionaryResults(dictEntries), level, dictName, dictNames, updateTooltip);
+    };
+    updateTooltip(dictNames[0]);
 }
 
+function createLoadingIndicator(): { element: HTMLElement; root: ReturnType<typeof createRoot> | null; } {
+    const element = document.createElement("div");
+    element.className = "yomicord-loading";
 
-function createLoadingIndicator(): HTMLElement {
-    const container = document.createElement("div");
-    container.className = "yomicord-loading";
+    const wrapper = document.createElement("div");
+    wrapper.className = "yomicord-spinner";
+    element.appendChild(wrapper);
 
-    const spinnerWrapper = document.createElement("div");
-    spinnerWrapper.style.cssText = `
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transform: scale(0.7);
-    `;
-
+    let root: ReturnType<typeof createRoot> | null = null;
     try {
-        const spinnerElement = React.createElement(Spinner, { type: Spinner.Type.WANDERING_CUBES });
-        const root = createRoot(spinnerWrapper);
-        root.render(spinnerElement);
-        (container as any)._reactRoot = root;
+        root = createRoot(wrapper);
+        root.render(React.createElement(Spinner, { type: Spinner.Type.WANDERING_CUBES }));
     } catch {
-        logger.debug("Spinner component unavailable, using text fallback");
-        spinnerWrapper.textContent = "Loading...";
+        root?.unmount();
+        root = null;
+        wrapper.textContent = "Loading...";
     }
-    container.appendChild(spinnerWrapper);
 
-    return container;
+    return { element, root };
 }
 
-function formatDictionaryResults(searchTerm: string, entries: any[]): HTMLElement {
+function formatDictionaryResults(entries: DictionaryEntry[]): HTMLElement {
     const container = document.createElement("div");
+    const sorted = [...entries].sort((a, b) => (b.score || 0) - (a.score || 0));
+    const maxDefs = entries.length > 10 ? 30 : settings.store.maxDefinitions;
 
-    // Sort all entries by score (frequency) - most common first
-    // This ensures entries with the same term but different readings are sorted by popularity
-    const sortedEntries = [...entries].sort((a: any, b: any) => (b.score || 0) - (a.score || 0));
-
-    // For partial reading matches, show more results (up to 30)
-    // For exact matches, use the user's setting (default 3)
-    const isPartialMatch = entries.length > 10; // Heuristic: many results = likely partial match
-    const maxDefs = isPartialMatch ? 30 : settings.store.maxDefinitions;
-    const limitedEntries = sortedEntries.slice(0, maxDefs);
-
-    // Display each entry separately (each term+reading combination gets its own entry)
-    for (let i = 0; i < limitedEntries.length; i++) {
-        const entry = limitedEntries[i];
-
+    for (const entry of sorted.slice(0, maxDefs)) {
         const entryDiv = document.createElement("div");
-        entryDiv.style.cssText = i > 0 ? "margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--background-modifier-accent);" : "";
+        entryDiv.className = "yomicord-entry";
 
-        // Term line
         const termLine = document.createElement("div");
-        termLine.style.cssText = "margin-bottom: 4px;";
+        termLine.className = "yomicord-term-line";
 
         const termSpan = document.createElement("span");
-        termSpan.style.cssText = "font-weight: 600; font-size: 17px; color: #fff;";
+        termSpan.className = "yomicord-term";
         termSpan.setAttribute("data-yomicord-entry", "true");
         termSpan.textContent = entry.term;
         termLine.appendChild(termSpan);
 
-        // Show reading for this specific entry
         if (settings.store.showReadings && entry.reading && entry.reading !== entry.term) {
             const readingSpan = document.createElement("span");
-            readingSpan.style.cssText = "margin-left: 8px; color: var(--text-muted); font-size: 14px;";
+            readingSpan.className = "yomicord-reading";
             readingSpan.setAttribute("data-yomicord-entry", "true");
             readingSpan.textContent = `【${entry.reading}】`;
             termLine.appendChild(readingSpan);
         }
-
         entryDiv.appendChild(termLine);
 
-        // Definitions for this specific entry
-        // Normalize definitions to handle different dictionary formats
-        const normalizedDefs = entry.definitions.map((def: any) => {
-            return normalizeDefinition(def);
-        });
-        for (let j = 0; j < Math.min(normalizedDefs.length, 3); j++) {
+        entry.definitions.slice(0, 3).forEach((def, i) => {
             const defDiv = document.createElement("div");
-            defDiv.style.cssText = "margin-left: 4px; margin-top: 2px; color: var(--text-muted);";
-            defDiv.setAttribute("data-yomicord-definition", "true");
-
-            const normalized = normalizedDefs[j];
-            if (typeof normalized === "string") {
-                // Plain text definition
-                const displayText = `${j + 1}. ${normalized}`;
-                defDiv.textContent = displayText;
-            } else {
-                // DOM element (structured content)
-                const numberSpan = document.createElement("span");
-                numberSpan.textContent = `${j + 1}. `;
-                defDiv.appendChild(numberSpan);
-                defDiv.appendChild(normalized);
-            }
+            defDiv.className = "yomicord-def";
+            const normalized = normalizeDefinition(def);
+            if (typeof normalized === "string") defDiv.textContent = `${i + 1}. ${normalized}`;
+            else defDiv.append(`${i + 1}. `, normalized);
             entryDiv.appendChild(defDiv);
-        }
+        });
 
         container.appendChild(entryDiv);
     }
@@ -866,92 +342,24 @@ function formatDictionaryResults(searchTerm: string, entries: any[]): HTMLElemen
     return container;
 }
 
-function handleKeyDown(e: KeyboardEvent) {
-    const scanKey = settings.store.scanKey;
-
-    if (checkKeyMatch(e, scanKey) && !isKeyPressed) {
-        isKeyPressed = true;
-    }
-}
-
 function handleKeyUp(e: KeyboardEvent) {
-    const scanKey = settings.store.scanKey;
-
-    if (checkKeyMatch(e, scanKey)) {
-        isKeyPressed = false;
-        // Abort any pending lookup when key is released
-        pendingLookupAborted = true;
-        // Don't hide tooltip - let it stay visible so user can scroll through results
+    if (e.key === SCAN_KEY_NAMES[settings.store.scanKey]) {
+        lookupSeq++;
         currentText = null;
     }
 }
 
-function checkKeyMatch(e: KeyboardEvent, scanKey: string): boolean {
-    switch (scanKey) {
-        case "alt":
-            return e.key === "Alt" || e.altKey;
-        case "ctrl":
-            return e.key === "Control" || e.ctrlKey;
-        case "shift":
-            return e.key === "Shift" || e.shiftKey;
-        default:
-            return false;
-    }
-}
-
 function handleWindowBlur() {
-    // When window loses focus (e.g., Alt+Tab), reset key state
-    isKeyPressed = false;
-    currentText = null;
-    // Abort any pending lookup
-    pendingLookupAborted = true;
-    // Note: We don't hide tooltips on blur - let them stay visible
-}
-
-function handleWindowFocus() {
-    // When window regains focus, verify key state is correct
-    isKeyPressed = false;
+    lookupSeq++;
     currentText = null;
 }
 
-function initialize() {
-    document.addEventListener("keydown", handleKeyDown, true);
-    document.addEventListener("keyup", handleKeyUp, true);
-    document.addEventListener("mousemove", handleMouseMove, true);
-    window.addEventListener("blur", handleWindowBlur);
-    window.addEventListener("focus", handleWindowFocus);
-}
-
-function cleanup() {
-    document.removeEventListener("keydown", handleKeyDown, true);
-    document.removeEventListener("keyup", handleKeyUp, true);
-    document.removeEventListener("mousemove", handleMouseMove, true);
-    window.removeEventListener("blur", handleWindowBlur);
-    window.removeEventListener("focus", handleWindowFocus);
-
-    // Remove global click handler
-    if (globalClickHandler) {
-        document.removeEventListener("mousedown", globalClickHandler);
-        globalClickHandler = null;
-    }
-
-    // Clear any pending mouse move timeout
-    if (mouseMoveTimeout !== null) {
-        clearTimeout(mouseMoveTimeout);
-        mouseMoveTimeout = null;
-    }
-
-    // Abort any pending lookup
-    pendingLookupAborted = true;
-
-    // Remove all tooltips
+function handleGlobalMouseDown(e: MouseEvent) {
+    if (tooltips.size === 0 || isScanKeyPressed(e)) return;
     for (const { container } of tooltips.values()) {
-        container.remove();
+        if (container.contains(e.target as Node)) return;
     }
-    tooltips.clear();
-
-    isKeyPressed = false;
-    currentText = null;
+    hideAllTooltips();
 }
 
 export default definePlugin({
@@ -961,14 +369,31 @@ export default definePlugin({
     settings,
 
     start() {
-        logger.info("Yomicord started");
-        initialize();
+        document.addEventListener("keyup", handleKeyUp, true);
+        document.addEventListener("mousemove", handleMouseMove, true);
+        document.addEventListener("mousedown", handleGlobalMouseDown);
+        window.addEventListener("blur", handleWindowBlur);
         void cleanupOrphanedDictionaryKeys();
     },
 
     stop() {
-        logger.info("Yomicord stopped");
-        cleanup();
+        document.removeEventListener("keyup", handleKeyUp, true);
+        document.removeEventListener("mousemove", handleMouseMove, true);
+        document.removeEventListener("mousedown", handleGlobalMouseDown);
+        window.removeEventListener("blur", handleWindowBlur);
+
+        if (mouseMoveTimeout !== null) {
+            clearTimeout(mouseMoveTimeout);
+            mouseMoveTimeout = null;
+        }
+        lookupSeq++;
+
+        for (const tooltip of tooltips.values()) {
+            if (tooltip.removalTimeout !== null) clearTimeout(tooltip.removalTimeout);
+            tooltip.reactRoot?.unmount();
+            tooltip.container.remove();
+        }
+        tooltips.clear();
+        currentText = null;
     },
 });
-

@@ -2,21 +2,19 @@
  * Vencord, a Discord client mod
  * Copyright (c) 2025 chev
  * SPDX-License-Identifier: GPL-3.0-or-later
- *
- * Dictionary management for Japanese lookups
- * Compatible with Yomichan dictionary format
  */
 
 import * as DataStore from "@api/DataStore";
 
-import { LanguageTransformer, japaneseTransforms } from "./logic";
+import { japaneseTransforms,LanguageTransformer } from "./logic";
 
 const DICTIONARY_KEY = "Yomicord_Dictionaries";
 const DICTIONARY_INDEX_KEY = "Yomicord_Dictionary_Index";
 const DICTIONARY_ORDER_KEY = "Yomicord_Dictionary_Order";
 const DICTIONARY_PRIORITIES_KEY = "Yomicord_Dictionary_Priorities";
 
-// Singleton transformer instance for deinflection
+const KANJI_REGEX = /[一-鿿]/;
+
 let transformer: LanguageTransformer | null = null;
 
 function getTransformer(): LanguageTransformer {
@@ -27,40 +25,26 @@ function getTransformer(): LanguageTransformer {
     return transformer;
 }
 
-/**
- * Generates deinflection candidates for a Japanese term
- * Uses Yomitan's actual transformation rules (1700+ lines of rules!)
- * Returns array of possible dictionary forms to search
- */
 function getDeinflectionCandidates(text: string): string[] {
-    const candidates: string[] = [text]; // Always try the original text first
-
-    try {
-        const transformer = getTransformer();
-        const results = transformer.transform(text);
-
-        // Extract unique text forms from the results
-        for (const result of results) {
-            if (result.text !== text && !candidates.includes(result.text)) {
-                candidates.push(result.text);
-            }
+    const candidates = [text];
+    for (const result of getTransformer().transform(text)) {
+        if (result.text !== text && !candidates.includes(result.text)) {
+            candidates.push(result.text);
         }
-    } catch {
     }
-
     return candidates;
 }
 
 export interface DictionaryEntry {
-    term: string;           // The word itself (e.g., "食べる")
-    reading: string;        // Reading in hiragana (e.g., "たべる")
-    definitions: string[];  // Array of definitions
-    tags: string[];         // Tags like "v1" for verb type
-    score: number;          // Frequency/priority score
-    dictionary?: string;     // Dictionary name this entry came from
+    term: string;
+    reading: string;
+    definitions: string[];
+    tags: string[];
+    score: number;
+    dictionary?: string;
 }
 
-export interface DictionaryMetadata {
+interface DictionaryMetadata {
     title: string;
     revision: string;
     sequenced: boolean;
@@ -70,12 +54,11 @@ interface DictionaryIndex {
     [dictionaryName: string]: DictionaryMetadata;
 }
 
-/**
- * Loads all dictionaries from storage
- */
-export async function getDictionaryIndex(): Promise<DictionaryIndex> {
-    const index = await DataStore.get(DICTIONARY_INDEX_KEY);
-    return index || {};
+type BucketItem = DictionaryEntry | string;
+type Bucket = { [key: string]: BucketItem[]; };
+
+async function getDictionaryIndex(): Promise<DictionaryIndex> {
+    return await DataStore.get(DICTIONARY_INDEX_KEY) || {};
 }
 
 export async function getDictionaryPriorities(): Promise<Record<string, number>> {
@@ -85,12 +68,14 @@ export async function getDictionaryPriorities(): Promise<Record<string, number>>
     if (legacy && legacy.length > 0) {
         const migrated: Record<string, number> = {};
         for (let i = 0; i < legacy.length; i++) migrated[legacy[i]] = i;
+        await setDictionaryPriorities(migrated);
+        await DataStore.del(DICTIONARY_ORDER_KEY);
         return migrated;
     }
     return {};
 }
 
-export async function setDictionaryPriorities(priorities: Record<string, number>): Promise<void> {
+async function setDictionaryPriorities(priorities: Record<string, number>): Promise<void> {
     await DataStore.set(DICTIONARY_PRIORITIES_KEY, priorities);
 }
 
@@ -101,511 +86,167 @@ export async function updateDictionaryPriority(name: string, priority: number): 
 }
 
 export function sortDictionariesByPriority(dictNames: string[], priorities: Record<string, number>): string[] {
-    const keys = Object.keys(priorities);
-    if (keys.length === 0) return dictNames;
+    if (Object.keys(priorities).length === 0) return dictNames;
     const defaultValue = Math.max(0, ...Object.values(priorities)) + 1;
-    return [...dictNames].sort((a, b) => {
-        const pa = priorities[a] ?? defaultValue;
-        const pb = priorities[b] ?? defaultValue;
-        return pa - pb;
-    });
+    return [...dictNames].sort((a, b) => (priorities[a] ?? defaultValue) - (priorities[b] ?? defaultValue));
 }
 
-// Cache for recent search results to avoid redundant lookups
-const searchCache = new Map<string, { results: DictionaryEntry[], timestamp: number; }>();
-const CACHE_TTL = 5000; // 5 seconds cache
+const searchCache = new Map<string, { results: DictionaryEntry[]; timestamp: number; }>();
+const CACHE_TTL = 5000;
 const MAX_CACHE_SIZE = 100;
 
-/**
- * Searches for a term in all loaded dictionaries
- * Tries: exact match → deinflected forms → partial reading match
- * For kanji terms, also finds all entries with the same term but different readings
- */
-export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
-    cacheHits = 0;
-    cacheMisses = 0;
+const dataStoreCache = new Map<string, { data: Bucket | undefined; timestamp: number; }>();
+const DATASTORE_CACHE_TTL = 10000;
 
-    const cacheKey = text;
-    const cached = searchCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-        return cached.results;
-    }
-
-    const results: DictionaryEntry[] = [];
-    const seen = new Set<string>(); // Track entries we've already added: "term|reading"
-    const kanjiTermsSearched = new Set<string>(); // Track kanji terms we've already searched for all readings
-
-    const index = await getDictionaryIndex();
-
-    const hasKanji = /[\u4E00-\u9FFF]/.test(text);
-
-    // Helper function to search for all readings of a kanji term
-    // Also adds them to resultsWithLength so they get properly sorted and prioritized
-    const searchAllReadingsForTerm = async (kanjiTerm: string, originalTextLength: number) => {
-        if (kanjiTermsSearched.has(kanjiTerm)) return; // Already searched
-        kanjiTermsSearched.add(kanjiTerm);
-
-        for (const dictName in index) {
-            const allReadings = await findAllReadingsForTerm(dictName, kanjiTerm);
-            for (const entry of allReadings) {
-                // Include dictionary name in key to allow same term/reading from different dictionaries
-                const key = `${dictName}|${entry.term}|${entry.reading}`;
-                if (!seen.has(key)) {
-                    // Add to resultsWithLength so it gets properly sorted and filtered
-                    // Results array will be rebuilt from filtered resultsWithLength later
-                    // Check if reading exactly matches (for entries found via searchAllReadingsForTerm)
-                    const readingExactMatch = entry.reading && entry.reading.length === originalTextLength &&
-                        text.substring(0, originalTextLength) === entry.reading;
-                    resultsWithLength.push({
-                        entry: { ...entry, dictionary: dictName },
-                        originalTextLength,
-                        fromDeinflection: false,
-                        readingExactMatch: readingExactMatch || false
-                    });
-                    seen.add(key);
-                    maxOriginalTextLength = Math.max(maxOriginalTextLength, originalTextLength);
-                }
-            }
-        }
-    };
-
-    const dictNames = await getInstalledDictionaries();
-
-    // Track results with their originalTextLength to prioritize longer matches
-    type ResultWithLength = {
-        entry: DictionaryEntry;
-        originalTextLength: number;
-        fromDeinflection: boolean;
-        readingExactMatch: boolean; // True if reading exactly equals the search substring
-    };
-    const resultsWithLength: ResultWithLength[] = [];
-    let maxOriginalTextLength = 0;
-
-    // Pre-fetch all DataStore keys we'll need in parallel for the first character
-    // This warms up the cache and reduces latency
-    const firstChar = text[0];
-    const prefetchPromises = dictNames.map(dictName => getDataStoreData(dictName, firstChar));
-    await Promise.all(prefetchPromises);
-
-    for (let originalTextLength = text.length; originalTextLength > 0; originalTextLength--) {
-        const searchText = text.substring(0, originalTextLength);
-        let foundAtThisLength = false;
-
-        // This is what Yomitan does via text preprocessors (convertHiraganaToKatakana with inverse mode)
-        const searchTextHiragana = convertKatakanaToHiragana(searchText);
-        const searchVariants = searchText !== searchTextHiragana
-            ? [searchText, searchTextHiragana]  // Try both katakana and hiragana
-            : [searchText];  // Already hiragana or no conversion needed
-
-        // 1. Try exact match first (for both katakana and hiragana variants)
-        // Use 'exact' matching since we know the exact term we're searching for
-        const exactPromises = searchVariants.flatMap(variant =>
-            dictNames.map(async (dictName) => {
-                const entries = await searchInDictionary(dictName, variant, 'exact');
-                return { dictName, entries, variant };
-            })
-        );
-        const exactResults = await Promise.all(exactPromises);
-
-        for (const { dictName, entries, variant } of exactResults) {
-            for (const entry of entries) {
-                // For kanji terms, check both term and reading
-                // Match if term equals variant OR reading equals/starts with variant
-                // Progressive shortening handles finding "赤" when searching "赤月"
-                if (/[\u4E00-\u9FFF]/.test(entry.term)) {
-                    const termMatches = entry.term === variant;
-                    const readingMatches = entry.reading && (entry.reading === variant || entry.reading.startsWith(variant));
-
-                    if (termMatches || readingMatches) {
-                        // Include dictionary name in key to allow same term/reading from different dictionaries
-                        // Different dictionaries may have different definitions for the same term
-                        const key = `${dictName}|${entry.term}|${entry.reading}`;
-                        if (!seen.has(key)) {
-                            // Check if reading exactly matches the search substring (use original searchText for exact match check)
-                            // BUT: if the term exactly matches, prioritize it as an exact match (e.g., "ぶりっ子【ぶりっこ】")
-                            const readingExactMatch = !!(entry.reading && (entry.reading === searchText || entry.reading === searchTextHiragana));
-                            const termExactMatch = !!(entry.term === searchText || entry.term === searchTextHiragana);
-                            // Treat as exact match if either term OR reading matches exactly
-                            const isExactMatch = termExactMatch || readingExactMatch;
-                            resultsWithLength.push({
-                                entry: { ...entry, dictionary: dictName },
-                                originalTextLength,
-                                fromDeinflection: false,
-                                readingExactMatch: isExactMatch
-                            });
-                            seen.add(key);
-                            maxOriginalTextLength = Math.max(maxOriginalTextLength, originalTextLength);
-                            foundAtThisLength = true;
-                            if (hasKanji) {
-                                await searchAllReadingsForTerm(entry.term, originalTextLength);
-                            }
-                        }
-                    }
-                } else {
-                    // For kana-only terms, require exact match or entry starts with variant and is at least as long
-                    if (entry.term === variant || (entry.term.startsWith(variant) && entry.term.length >= variant.length)) {
-                        // Include dictionary name in key to allow same term/reading from different dictionaries
-                        const key = `${dictName}|${entry.term}|${entry.reading}`;
-                        if (!seen.has(key)) {
-                            // Check if reading exactly matches the search substring (use original searchText for exact match check)
-                            // BUT: if the term exactly matches, prioritize it as an exact match
-                            const readingExactMatch = !!(entry.reading && (entry.reading === searchText || entry.reading === searchTextHiragana));
-                            const termExactMatch = !!(entry.term === searchText || entry.term === searchTextHiragana);
-                            // Treat as exact match if either term OR reading matches exactly
-                            const isExactMatch = termExactMatch || readingExactMatch;
-                            resultsWithLength.push({
-                                entry: { ...entry, dictionary: dictName },
-                                originalTextLength,
-                                fromDeinflection: false,
-                                readingExactMatch: isExactMatch
-                            });
-                            seen.add(key);
-                            maxOriginalTextLength = Math.max(maxOriginalTextLength, originalTextLength);
-                            foundAtThisLength = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        // EARLY TERMINATION CHECK #1: Only skip deinflections if we have exact matches
-        // But don't stop the loop - we want to search all substrings like Yomitan does
-        // This allows us to show results from all lengths (お早うございます, お早う, おはよ, おは, お)
-        // Only skip deinflections to save time when we already have perfect direct matches
-        let shouldSkipDeinflections = false;
-        if (originalTextLength >= 4 && foundAtThisLength) {
-            const exactDirectMatches = resultsWithLength.filter(r =>
-                r.originalTextLength === originalTextLength &&
-                r.readingExactMatch &&
-                !r.fromDeinflection
-            );
-
-            if (exactDirectMatches.length > 0) {
-                shouldSkipDeinflections = true;
-            }
-        }
-
-        // 2. Try deinflected forms for this substring (skip if we have perfect direct matches)
-        // YOMITAN BEHAVIOR: Deinflect BOTH katakana and hiragana variants
-        // This ensures "ゲロ" → "げろ" → deinflect → finds "げろ"
-        if (!shouldSkipDeinflections) {
-            const allDeinflections = new Set<string>();
-            for (const variant of searchVariants) {
-                const deinflections = getDeinflectionCandidates(variant);
-                for (const deinflected of deinflections) {
-                    allDeinflections.add(deinflected);
-                }
-            }
-            const deinflections = Array.from(allDeinflections);
-            for (const deinflected of deinflections) {
-                if (searchVariants.includes(deinflected)) continue; // Skip if same as original variants
-
-                const deinflectPromises = dictNames.map(async (dictName) => {
-                    const entries = await searchInDictionary(dictName, deinflected, 'exact');
-                    return { dictName, entries };
-                });
-                const deinflectResults = await Promise.all(deinflectPromises);
-
-                for (const { dictName, entries } of deinflectResults) {
-                    for (const entry of entries) {
-                        // Match by either term OR reading
-                        const termMatches = entry.term === deinflected;
-                        const readingMatches = entry.reading && entry.reading === deinflected;
-
-                        if (!termMatches && !readingMatches) {
-                            continue;
-                        }
-
-                        // Include dictionary name in key to allow same term/reading from different dictionaries
-                        const key = `${dictName}|${entry.term}|${entry.reading}`;
-                        if (!seen.has(key)) {
-                            const readingExactMatch = entry.reading && entry.reading === deinflected;
-                            resultsWithLength.push({
-                                entry: { ...entry, dictionary: dictName },
-                                originalTextLength,
-                                fromDeinflection: true,
-                                readingExactMatch: readingExactMatch || false
-                            });
-                            seen.add(key);
-                            maxOriginalTextLength = Math.max(maxOriginalTextLength, originalTextLength);
-                            foundAtThisLength = true;
-
-                            // If this entry has a kanji term and the deinflected form matches the reading,
-                            // search for ALL readings of this kanji term
-                            if (hasKanji && /[\u4E00-\u9FFF]/.test(entry.term) &&
-                                (entry.term === deinflected || entry.reading === deinflected)) {
-                                await searchAllReadingsForTerm(entry.term, originalTextLength);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (originalTextLength <= 2 && maxOriginalTextLength >= 3) {
-            break;
-        }
-    }
-
-    if (resultsWithLength.length > 0) {
-        const exactReadingMatches = resultsWithLength.filter(r => r.readingExactMatch);
-
-        if (exactReadingMatches.length > 0) {
-            // We have exact matches - prioritize these
-            // YOMITAN BEHAVIOR:
-            // 1. Prefer direct matches over deinflected matches when they're at similar lengths
-            // 2. But prefer longer originalTextLength when deinflected matches are from the full text
-            // This ensures:
-            // - "げろ【げろ】" (direct, length 2) wins over "下郎【げろう】" (deinflected, length 3) for "ゲロい"
-            // - "思う【おもう】" (deinflected, length 4) wins over "面【おも】" (direct, length 2) for "おもった"
-
-            // First, separate direct and deinflected matches
-            const directExactMatches = exactReadingMatches.filter(r => !r.fromDeinflection);
-            const deinflectedExactMatches = exactReadingMatches.filter(r => r.fromDeinflection);
-
-            // Find max lengths
-            const maxDirectLength = directExactMatches.length > 0
-                ? Math.max(...directExactMatches.map(r => r.originalTextLength))
-                : 0;
-            const maxDeinflectLength = deinflectedExactMatches.length > 0
-                ? Math.max(...deinflectedExactMatches.map(r => r.originalTextLength))
-                : 0;
-
-            // YOMITAN BEHAVIOR: Show results from ALL lengths, not just the longest
-            // This allows showing: お早うございます (length 8), お早う (length 4), おはよ (length 3), おは (length 2), お (length 1)
-            // Group results by length and include all lengths that have exact matches
-            const lengthsWithExactMatches = new Set<number>();
-            exactReadingMatches.forEach(r => lengthsWithExactMatches.add(r.originalTextLength));
-
-            // Include all results from lengths that have exact matches
-            // This mimics Yomitan's behavior of showing all substring matches
-            const allExactMatchLengths = Array.from(lengthsWithExactMatches).sort((a, b) => b - a); // Sort descending
-
-            for (const length of allExactMatchLengths) {
-                const matchesAtLength = resultsWithLength.filter(r => r.originalTextLength === length);
-                // Prioritize exact reading matches, but include all matches at this length
-                const exactAtLength = matchesAtLength.filter(r => r.readingExactMatch);
-                const inexactAtLength = matchesAtLength.filter(r => !r.readingExactMatch);
-
-                // Add exact matches first, then inexact ones
-                results.push(...exactAtLength.map(r => r.entry));
-                results.push(...inexactAtLength.map(r => r.entry));
-            }
-
-        } else {
-            // No exact reading matches, use prefix matches
-            // YOMITAN BEHAVIOR: Show results from multiple lengths if they're meaningful
-            // Group by length and include results from all reasonable lengths
-            const allLengths = new Set<number>();
-            resultsWithLength.forEach(r => allLengths.add(r.originalTextLength));
-            const sortedLengths = Array.from(allLengths).sort((a, b) => b - a); // Sort descending
-
-            // Filter out single-char matches if we have multi-char matches (unless single char is the only match)
-            const meaningfulLengths = sortedLengths.filter(len => {
-                if (len === 1 && sortedLengths.length > 1 && sortedLengths[0] > 1) {
-                    return false; // Skip single char if we have longer matches
-                }
-                return true;
-            });
-
-            // Include results from all meaningful lengths
-            for (const length of meaningfulLengths) {
-                const matchesAtLength = resultsWithLength.filter(r => r.originalTextLength === length);
-                results.push(...matchesAtLength.map(r => r.entry));
-            }
-
-        }
-
-        // This prioritizes actual words over kanji-only dictionary entries
-        // Also track which results came from deinflection to prioritize them
-        const resultsWithInfo = results.map(entry => {
-            // Find the originalTextLength for this entry
-            const resultInfo = resultsWithLength.find(r => r.entry.term === entry.term && r.entry.reading === entry.reading);
-            return {
-                entry,
-                originalTextLength: resultInfo?.originalTextLength || 0,
-                fromDeinflection: resultInfo?.fromDeinflection || false,
-                readingExactMatch: resultInfo?.readingExactMatch || false
-            };
-        });
-
-        resultsWithInfo.sort((a, b) => {
-            // Prioritize entries with exact reading matches (already filtered above, but sort within)
-            if (a.readingExactMatch && !b.readingExactMatch) return -1;
-            if (!a.readingExactMatch && b.readingExactMatch) return 1;
-
-            // Then prioritize entries from longer originalTextLength (better matches)
-            if (a.originalTextLength !== b.originalTextLength) {
-                return b.originalTextLength - a.originalTextLength;
-            }
-
-            // Prioritize entries that have a reading (actual words) over kanji-only entries
-            const aHasReading = a.entry.reading && a.entry.reading !== a.entry.term;
-            const bHasReading = b.entry.reading && b.entry.reading !== b.entry.term;
-            if (aHasReading && !bHasReading) return -1;
-            if (!aHasReading && bHasReading) return 1;
-
-            // Prioritize entries from deinflection (verbs/nouns/adjectives) over exact matches
-            // This helps "たしかに" → "確か" and "分かってた" → "分かる"
-            if (a.fromDeinflection && !b.fromDeinflection) return -1;
-            if (!a.fromDeinflection && b.fromDeinflection) return 1;
-
-            // Prioritize shorter terms when readings match - "家" over "家持ち", "ゲロ" over "ゲラ刷り"
-            if (a.entry.reading && b.entry.reading && a.entry.reading === b.entry.reading) {
-                if (a.entry.term.length !== b.entry.term.length) {
-                    return a.entry.term.length - b.entry.term.length;
-                }
-            }
-
-            // Then prioritize entries where reading exactly matches the search substring
-            const searchSubstring = text.substring(0, a.originalTextLength);
-            const aReadingExact = a.entry.reading && a.entry.reading === searchSubstring;
-            const bReadingExact = b.entry.reading && b.entry.reading === searchSubstring;
-            if (aReadingExact && !bReadingExact) return -1;
-            if (!aReadingExact && bReadingExact) return 1;
-
-            // Finally sort by score (frequency) - higher score = more common
-            return (b.entry.score || 0) - (a.entry.score || 0);
-        });
-
-        // Extract just the entries
-        results.length = 0;
-        results.push(...resultsWithInfo.map(r => r.entry));
-
-        if (results.length > 0) {
-            return results;
-        }
-        // If we filtered out single-char matches and have no results, fall through to partial reading match
-    }
-
-    if (results.length === 0 && text.length >= 2) {
-        for (const dictName in index) {
-            const partialMatches = await searchByPartialReading(dictName, text);
-            for (const entry of partialMatches) {
-                // Include dictionary name in key to allow same term/reading from different dictionaries
-                const key = `${dictName}|${entry.term}|${entry.reading}`;
-                if (!seen.has(key)) {
-                    // For kana-only search text, prefer entries where reading matches exactly or starts with search text
-                    // This ensures "ろん" finds "論" (ろん) not just entries that happen to share a prefix
-                    const readingMatches = entry.reading && (
-                        entry.reading === text ||
-                        entry.reading.startsWith(text) ||
-                        text.startsWith(entry.reading)
-                    );
-
-                    // Only add if reading matches well (exact or prefix match)
-                    // This filters out unrelated entries that just happen to share a character
-                    if (readingMatches) {
-                        results.push({ ...entry, dictionary: dictName });
-                        seen.add(key);
-
-                        // If this entry has a kanji term and reading matches search text, search for ALL readings
-                        if (hasKanji && /[\u4E00-\u9FFF]/.test(entry.term) && readingMatches) {
-                            await searchAllReadingsForTerm(entry.term, text.length);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Sort by score (frequency) - higher score = more common
-    results.sort((a, b) => (b.score || 0) - (a.score || 0));
-
-    // Cache the results
-    if (searchCache.size >= MAX_CACHE_SIZE) {
-        const oldestKey = searchCache.keys().next().value;
-        if (oldestKey !== undefined) searchCache.delete(oldestKey);
-    }
-    searchCache.set(cacheKey, { results, timestamp: Date.now() });
-
-    return results;
-}
-
-/**
- * Finds all entries that have the same term (kanji) but potentially different readings
- * This allows finding all readings for a kanji word like 昨日 (さくじつ, きのう, etc.)
- * Since entries are stored in arrays indexed by term, we just need to search the primary bucket
- */
-async function findAllReadingsForTerm(dictionaryName: string, term: string): Promise<DictionaryEntry[]> {
-    // Entries with the same term are stored in the same array, indexed by the first character
-    // Use exact matching for better performance - we want the exact term, not prefix matches
-    const entries = await searchInDictionary(dictionaryName, term, 'exact');
-
-    // Filter to only entries that match the term exactly (should already be all of them with exact matching)
-    return entries.filter(entry => entry.term === term);
-}
-
-/**
- * Searches for a term in a specific dictionary
- * Uses prefix matching like Yomitan: finds entries where term OR reading starts with the search text
- *
- * Since entries are indexed by first character, we need to search ALL buckets when doing prefix matching
- * on readings, because an entry with reading "あか" is indexed under "あ", not "赤"
- */
-// Cache for DataStore.get() results to avoid redundant fetches
-// Key: dictionary name + first character, Value: data object
-const dataStoreCache = new Map<string, { data: any, timestamp: number; }>();
-const DATASTORE_CACHE_TTL = 10000; // 10 seconds cache for DataStore results
-
-let cacheHits = 0;
-let cacheMisses = 0;
-
-async function getDataStoreData(dictionaryName: string, firstChar: string): Promise<any> {
+async function getBucket(dictionaryName: string, firstChar: string): Promise<Bucket | undefined> {
     const cacheKey = `${dictionaryName}_${firstChar}`;
     const cached = dataStoreCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < DATASTORE_CACHE_TTL) {
-        cacheHits++;
-        return cached.data; // Cache hit - return immediately (no DataStore call needed)
-    }
-    cacheMisses++;
+    if (cached && Date.now() - cached.timestamp < DATASTORE_CACHE_TTL) return cached.data;
 
-    const dataKey = `${DICTIONARY_KEY}_${dictionaryName}_${firstChar}`;
-    const data = await DataStore.get(dataKey);
-
+    const data = await DataStore.get<Bucket>(`${DICTIONARY_KEY}_${dictionaryName}_${firstChar}`);
     dataStoreCache.set(cacheKey, { data, timestamp: Date.now() });
-
-    // Limit cache size
     if (dataStoreCache.size > 50) {
         const oldestKey = dataStoreCache.keys().next().value;
         if (oldestKey !== undefined) dataStoreCache.delete(oldestKey);
     }
-
     return data;
 }
 
-export async function searchInDictionary(dictionaryName: string, term: string, matchType: 'exact' | 'prefix' = 'prefix'): Promise<DictionaryEntry[]> {
+async function searchInDictionary(dictionaryName: string, term: string): Promise<DictionaryEntry[]> {
+    if (term.length === 0) return [];
+    const bucket = await getBucket(dictionaryName, term[0]);
+    const items = bucket?.[term];
+    if (!Array.isArray(items)) return [];
+
     const results: DictionaryEntry[] = [];
-    const seen = new Set<string>(); // Track entries by "term|reading" to avoid duplicates
+    const seen = new Set<string>();
+    const add = (entry: DictionaryEntry) => {
+        if (entry.term !== term && entry.reading !== term) return;
+        const key = `${entry.term}|${entry.reading}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            results.push(entry);
+        }
+    };
 
-    if (term.length === 0) return results;
+    for (const item of items) {
+        if (typeof item === "string") {
+            const refBucket = await getBucket(dictionaryName, item[0]);
+            const refEntries = refBucket?.[item];
+            if (!Array.isArray(refEntries)) continue;
+            for (const refEntry of refEntries) {
+                if (typeof refEntry !== "string") add(refEntry);
+            }
+        } else {
+            add(item);
+        }
+    }
 
-    // For exact matching, we can directly access the term if it exists in the index
-    // This is much faster than iterating through all entries
-    if (matchType === 'exact') {
-        // Use cached DataStore.get() to avoid redundant fetches
-        const data = await getDataStoreData(dictionaryName, term[0]);
+    return results;
+}
 
-        if (data) {
-            // The data object contains both term and reading indexes
-            // Terms are stored keyed by term, readings are stored keyed by reading
-            // Since we're searching for "term", check if it exists as either a term key or reading key
-            // Both could be in the same bucket if they start with the same character
+async function findAllReadingsForTerm(dictionaryName: string, term: string): Promise<DictionaryEntry[]> {
+    return (await searchInDictionary(dictionaryName, term)).filter(entry => entry.term === term);
+}
 
-            // Check if search term exists as a term key
-            if (data[term]) {
-                const entries = data[term] as DictionaryEntry[];
-                if (Array.isArray(entries)) {
+export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
+    const cached = searchCache.get(text);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) return cached.results;
+
+    const seen = new Set<string>();
+    const kanjiTermsSearched = new Set<string>();
+    const hasKanji = KANJI_REGEX.test(text);
+    const dictNames = await getInstalledDictionaries();
+
+    type ResultWithLength = {
+        entry: DictionaryEntry;
+        originalTextLength: number;
+        fromDeinflection: boolean;
+        readingExactMatch: boolean;
+    };
+    const resultsWithLength: ResultWithLength[] = [];
+    let maxOriginalTextLength = 0;
+
+    const addResult = (dictName: string, entry: DictionaryEntry, originalTextLength: number, fromDeinflection: boolean, readingExactMatch: boolean): boolean => {
+        const key = `${dictName}|${entry.term}|${entry.reading}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        resultsWithLength.push({
+            entry: { ...entry, dictionary: dictName },
+            originalTextLength,
+            fromDeinflection,
+            readingExactMatch
+        });
+        maxOriginalTextLength = Math.max(maxOriginalTextLength, originalTextLength);
+        return true;
+    };
+
+    const searchAllReadingsForTerm = async (kanjiTerm: string, originalTextLength: number) => {
+        if (kanjiTermsSearched.has(kanjiTerm)) return;
+        kanjiTermsSearched.add(kanjiTerm);
+        await Promise.all(dictNames.map(async dictName => {
+            for (const entry of await findAllReadingsForTerm(dictName, kanjiTerm)) {
+                const readingExactMatch = !!entry.reading &&
+                    entry.reading.length === originalTextLength &&
+                    text.substring(0, originalTextLength) === entry.reading;
+                addResult(dictName, entry, originalTextLength, false, readingExactMatch);
+            }
+        }));
+    };
+
+    await Promise.all(dictNames.map(dictName => getBucket(dictName, text[0])));
+
+    for (let originalTextLength = text.length; originalTextLength > 0; originalTextLength--) {
+        const searchText = text.substring(0, originalTextLength);
+        const searchTextHiragana = convertKatakanaToHiragana(searchText);
+        const searchVariants = searchText !== searchTextHiragana ? [searchText, searchTextHiragana] : [searchText];
+        let foundAtThisLength = false;
+
+        const exactResults = await Promise.all(searchVariants.flatMap(variant =>
+            dictNames.map(async dictName => ({ dictName, variant, entries: await searchInDictionary(dictName, variant) }))
+        ));
+
+        for (const { dictName, variant, entries } of exactResults) {
+            for (const entry of entries) {
+                const matches = KANJI_REGEX.test(entry.term)
+                    ? entry.term === variant || !!entry.reading?.startsWith(variant)
+                    : entry.term.startsWith(variant);
+                if (!matches) continue;
+
+                const isExactMatch = entry.term === searchText || entry.term === searchTextHiragana ||
+                    entry.reading === searchText || entry.reading === searchTextHiragana;
+                if (addResult(dictName, entry, originalTextLength, false, isExactMatch)) {
+                    foundAtThisLength = true;
+                    if (hasKanji && KANJI_REGEX.test(entry.term)) {
+                        await searchAllReadingsForTerm(entry.term, originalTextLength);
+                    }
+                }
+            }
+        }
+
+        const shouldSkipDeinflections = originalTextLength >= 4 && foundAtThisLength &&
+            resultsWithLength.some(r => r.originalTextLength === originalTextLength && r.readingExactMatch && !r.fromDeinflection);
+
+        if (!shouldSkipDeinflections) {
+            const deinflections = new Set<string>();
+            for (const variant of searchVariants) {
+                for (const deinflected of getDeinflectionCandidates(variant)) deinflections.add(deinflected);
+            }
+
+            for (const deinflected of deinflections) {
+                if (searchVariants.includes(deinflected)) continue;
+
+                const deinflectResults = await Promise.all(dictNames.map(async dictName =>
+                    ({ dictName, entries: await searchInDictionary(dictName, deinflected) })
+                ));
+
+                for (const { dictName, entries } of deinflectResults) {
                     for (const entry of entries) {
-                        // Match if term OR reading equals the search term
-                        const termMatches = entry.term === term;
-                        const readingMatches = entry.reading && entry.reading === term;
-
-                        if (termMatches || readingMatches) {
-                            const key = `${entry.term}|${entry.reading}`;
-                            if (!seen.has(key)) {
-                                results.push(entry);
-                                seen.add(key);
+                        if (entry.term !== deinflected && entry.reading !== deinflected) continue;
+                        if (addResult(dictName, entry, originalTextLength, true, entry.reading === deinflected)) {
+                            foundAtThisLength = true;
+                            if (hasKanji && KANJI_REGEX.test(entry.term)) {
+                                await searchAllReadingsForTerm(entry.term, originalTextLength);
                             }
                         }
                     }
@@ -613,148 +254,125 @@ export async function searchInDictionary(dictionaryName: string, term: string, m
             }
         }
 
-        return results;
+        if (originalTextLength <= 2 && maxOriginalTextLength >= 3) break;
     }
 
-    // For prefix matching, search through all entries (original behavior)
-    // Search by first character of term (expression index)
-    // This finds entries where the TERM or READING starts with the search text
-    // Combined into a single loop to avoid iterating the same data twice
-    const termData = await getDataStoreData(dictionaryName, term[0]);
+    let results: DictionaryEntry[] = [];
 
-    if (termData) {
-        // Single loop that checks both term and reading matches
-        for (const indexKey in termData) {
-            const entries = termData[indexKey] as DictionaryEntry[];
-            if (!Array.isArray(entries)) continue;
+    if (resultsWithLength.length > 0) {
+        const exactLengths = new Set(resultsWithLength.filter(r => r.readingExactMatch).map(r => r.originalTextLength));
+        let included: ResultWithLength[];
+        if (exactLengths.size > 0) {
+            included = resultsWithLength.filter(r => exactLengths.has(r.originalTextLength));
+        } else {
+            const maxLength = Math.max(...resultsWithLength.map(r => r.originalTextLength));
+            included = resultsWithLength.filter(r => r.originalTextLength > 1 || maxLength === 1);
+        }
 
-            for (const entry of entries) {
-                if (!entry || typeof entry.term !== 'string') continue;
+        included.sort((a, b) => {
+            if (a.readingExactMatch !== b.readingExactMatch) return a.readingExactMatch ? -1 : 1;
+            if (a.originalTextLength !== b.originalTextLength) return b.originalTextLength - a.originalTextLength;
 
-                const key = `${entry.term}|${entry.reading}`;
-                let shouldAdd = false;
+            const aHasReading = !!a.entry.reading && a.entry.reading !== a.entry.term;
+            const bHasReading = !!b.entry.reading && b.entry.reading !== b.entry.term;
+            if (aHasReading !== bHasReading) return aHasReading ? -1 : 1;
 
-                // Check if term matches (prefix matching)
-                // Progressive shortening in lookupTerm handles finding substrings
-                if (entry.term.startsWith(term)) {
-                    shouldAdd = true;
-                }
+            if (a.fromDeinflection !== b.fromDeinflection) return a.fromDeinflection ? -1 : 1;
 
-                // Check if reading matches (prefix matching)
-                if (!shouldAdd && entry.reading && typeof entry.reading === 'string') {
-                    // For prefix matching: entry reading must start with search text
-                    // Progressive shortening in lookupTerm handles finding substrings
-                    if (entry.reading.startsWith(term)) {
-                        shouldAdd = true;
-                    }
-                }
+            if (a.entry.reading && a.entry.reading === b.entry.reading && a.entry.term.length !== b.entry.term.length) {
+                return a.entry.term.length - b.entry.term.length;
+            }
 
-                if (shouldAdd && !seen.has(key)) {
-                    results.push(entry);
+            const searchSubstring = text.substring(0, a.originalTextLength);
+            const aReadingExact = a.entry.reading === searchSubstring;
+            const bReadingExact = b.entry.reading === searchSubstring;
+            if (aReadingExact !== bReadingExact) return aReadingExact ? -1 : 1;
+
+            return (b.entry.score || 0) - (a.entry.score || 0);
+        });
+
+        results = included.map(r => r.entry);
+    } else if (text.length >= 2) {
+        for (const dictName of dictNames) {
+            for (const entry of await searchByPartialReading(dictName, text)) {
+                const key = `${dictName}|${entry.term}|${entry.reading}`;
+                if (seen.has(key)) continue;
+                const readingMatches = !!entry.reading &&
+                    (entry.reading === text || entry.reading.startsWith(text) || text.startsWith(entry.reading));
+                if (readingMatches) {
                     seen.add(key);
+                    results.push({ ...entry, dictionary: dictName });
                 }
             }
         }
+        results.sort((a, b) => (b.score || 0) - (a.score || 0));
     }
+
+    if (searchCache.size >= MAX_CACHE_SIZE) {
+        const oldestKey = searchCache.keys().next().value;
+        if (oldestKey !== undefined) searchCache.delete(oldestKey);
+    }
+    searchCache.set(text, { results, timestamp: Date.now() });
 
     return results;
 }
 
-/**
- * Searches for entries with readings that partially match the search term
- * Used as a fallback when exact matches fail
- *
- * Finds entries where the reading shares a common prefix with the search term
- * Example: "メンション" (めんしょん) → finds "綿糸" (めんし) because they share "めんし"
- */
-export async function searchByPartialReading(dictionaryName: string, searchTerm: string, minMatchLength: number = 2): Promise<DictionaryEntry[]> {
-    const results: Array<{ entry: DictionaryEntry, score: number; }> = [];
-    const seen = new Set<string>(); // Track entries we've already added
-
-    // Convert katakana to hiragana for comparison
+async function searchByPartialReading(dictionaryName: string, searchTerm: string, minMatchLength = 2): Promise<DictionaryEntry[]> {
     const searchReading = convertKatakanaToHiragana(searchTerm);
-
-    // Only search if we have enough characters
     if (searchReading.length < minMatchLength) return [];
 
-    // Try progressively shorter prefixes of the search term
-    // This ensures we find "めんし" when searching "めんしょん"
-    // DON'T stop early - collect ALL matching entries from ALL prefix lengths
-    for (let prefixLength = searchReading.length; prefixLength >= minMatchLength; prefixLength--) {
-        const prefix = searchReading.substring(0, prefixLength);
+    const bucket = await getBucket(dictionaryName, searchReading[0]);
+    if (!bucket) return [];
 
-        // Get all entries indexed by the first character of this prefix
-        // Use cached getDataStoreData to avoid redundant fetches
-        const data = await getDataStoreData(dictionaryName, prefix[0]);
+    const results: Array<{ entry: DictionaryEntry; score: number; }> = [];
+    const seen = new Set<string>();
+    const addIfMatch = (entry: DictionaryEntry) => {
+        const key = `${entry.term}|${entry.reading}`;
+        if (seen.has(key)) return;
+        const common = getCommonPrefix(searchReading, convertKatakanaToHiragana(entry.reading));
+        if (common.length >= minMatchLength) {
+            seen.add(key);
+            results.push({ entry, score: common.length });
+        }
+    };
 
-        if (!data) continue;
-
-        // Search through all entries for partial reading matches
-        for (const indexKey in data) {
-            const entries = data[indexKey] as DictionaryEntry[];
-            for (const entry of entries) {
-                // Create unique key to avoid duplicates
-                const entryKey = `${entry.term}|${entry.reading}`;
-                if (seen.has(entryKey)) continue;
-
-                const entryReading = convertKatakanaToHiragana(entry.reading);
-
-                // Check if they share a meaningful prefix
-                const commonPrefix = getCommonPrefix(prefix, entryReading);
-                if (commonPrefix.length >= minMatchLength) {
-                    // Found a match - add it with a score (longer prefix = higher score)
-                    // This helps us sort by relevance later
-                    const score = commonPrefix.length * 1000 + prefixLength; // Longer matches first
-                    results.push({ entry, score });
-                    seen.add(entryKey);
+    for (const indexKey in bucket) {
+        const items = bucket[indexKey];
+        if (!Array.isArray(items)) continue;
+        for (const item of items) {
+            if (typeof item === "string") {
+                if (getCommonPrefix(searchReading, convertKatakanaToHiragana(indexKey)).length < minMatchLength) continue;
+                const refBucket = await getBucket(dictionaryName, item[0]);
+                const refEntries = refBucket?.[item];
+                if (!Array.isArray(refEntries)) continue;
+                for (const refEntry of refEntries) {
+                    if (typeof refEntry !== "string" && refEntry.reading === indexKey) addIfMatch(refEntry);
                 }
+            } else {
+                addIfMatch(item);
             }
         }
     }
 
-    // Sort by score (longer common prefix = more relevant)
     results.sort((a, b) => b.score - a.score);
-
-    // Return just the entries
     return results.map(r => r.entry);
 }
 
-/**
- * Gets the longest common prefix between two strings
- */
 function getCommonPrefix(str1: string, str2: string): string {
     let i = 0;
-    while (i < str1.length && i < str2.length && str1[i] === str2[i]) {
-        i++;
-    }
+    while (i < str1.length && i < str2.length && str1[i] === str2[i]) i++;
     return str1.substring(0, i);
 }
 
-/**
- * Converts katakana to hiragana for reading comparison
- */
 function convertKatakanaToHiragana(text: string): string {
-    return text.replace(/[\u30A0-\u30FF]/g, (char) => {
+    return text.replace(/[゠-ヿ]/g, char => {
         const code = char.charCodeAt(0);
-        // Katakana range: 0x30A0-0x30FF
-        // Hiragana range: 0x3040-0x309F
-        // Offset: 0x60
-        if (code >= 0x30A1 && code <= 0x30F6) {
-            return String.fromCharCode(code - 0x60);
-        }
-        return char;
+        return code >= 0x30A1 && code <= 0x30F6 ? String.fromCharCode(code - 0x60) : char;
     });
 }
 
-/**
- * Progress callback type for dictionary import
- */
 export type ProgressCallback = (current: number, total: number, stage: string) => void;
 
-/**
- * Imports a dictionary from JSON file(s)
- * Supports: term_bank_N.json files from extracted Yomichan dictionaries
- */
 export async function importDictionaryJSON(file: File, dictionaryName: string, onProgress?: ProgressCallback): Promise<{ success: boolean; error?: string; }> {
     try {
         onProgress?.(0, 100, "Reading file...");
@@ -762,7 +380,6 @@ export async function importDictionaryJSON(file: File, dictionaryName: string, o
 
         onProgress?.(10, 100, "Parsing JSON...");
         const termBank = JSON.parse(text);
-
         if (!Array.isArray(termBank)) {
             return { success: false, error: "Invalid format: expected array of terms" };
         }
@@ -770,85 +387,59 @@ export async function importDictionaryJSON(file: File, dictionaryName: string, o
         onProgress?.(20, 100, "Updating dictionary index...");
         const index = await getDictionaryIndex();
         if (!index[dictionaryName]) {
-            index[dictionaryName] = {
-                title: dictionaryName,
-                revision: "imported",
-                sequenced: false
-            };
+            index[dictionaryName] = { title: dictionaryName, revision: "imported", sequenced: false };
             await DataStore.set(DICTIONARY_INDEX_KEY, index);
             const priorities = await getDictionaryPriorities();
-            const maxP = Object.values(priorities).length > 0 ? Math.max(...Object.values(priorities)) : -1;
-            priorities[dictionaryName] = maxP + 1;
+            const maxPriority = Object.values(priorities).length > 0 ? Math.max(...Object.values(priorities)) : -1;
+            priorities[dictionaryName] = maxPriority + 1;
             await setDictionaryPriorities(priorities);
         }
 
-        // Process and store the term bank
         await processTermBank(dictionaryName, termBank, onProgress);
 
+        dataStoreCache.clear();
+        searchCache.clear();
         onProgress?.(100, 100, "Complete!");
         return { success: true };
     } catch (error) {
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : "Unknown error"
-        };
+        return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
     }
 }
 
-/**
- * Imports multiple dictionary files at once
- */
 export async function importMultipleDictionaryFiles(files: File[], dictionaryName: string, onProgress?: ProgressCallback): Promise<{ success: boolean; error?: string; imported: number; }> {
     let imported = 0;
-    const totalFiles = files.length;
+    let lastError: string | undefined;
 
     for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const fileProgress = (current: number, total: number, stage: string) => {
-            // Calculate overall progress across all files
-            const fileProgressPercent = (current / total) * 100;
-            const overallProgress = ((i / totalFiles) * 100) + (fileProgressPercent / totalFiles);
-            onProgress?.(Math.round(overallProgress), 100, `File ${i + 1}/${totalFiles}: ${stage}`);
-        };
-
-        const result = await importDictionaryJSON(file, dictionaryName, fileProgress);
-        if (result.success) {
-            imported++;
-        }
+        const result = await importDictionaryJSON(files[i], dictionaryName, (current, total, stage) => {
+            const overall = (i / files.length) * 100 + (current / total) * 100 / files.length;
+            onProgress?.(Math.round(overall), 100, `File ${i + 1}/${files.length}: ${stage}`);
+        });
+        if (result.success) imported++;
+        else lastError = result.error;
     }
 
     if (imported === 0) {
-        return { success: false, error: "No files were imported successfully", imported: 0 };
+        return { success: false, error: lastError ?? "No files were imported successfully", imported: 0 };
     }
-
     return { success: true, imported };
 }
 
-/**
- * Processes a term bank and stores entries indexed by first character
- * Indexes by BOTH term and reading for comprehensive lookups
- */
+const itemKey = (item: BucketItem) => typeof item === "string" ? item : `${item.term}|${item.reading}`;
+
 async function processTermBank(dictionaryName: string, termBank: any[], onProgress?: ProgressCallback) {
     const totalEntries = termBank.length;
-    const REPORT_INTERVAL = Math.max(1, Math.floor(totalEntries / 100)); // Report progress every ~1%
-
-    // Group terms by first character for efficient lookup
-    const grouped: { [firstChar: string]: { [term: string]: DictionaryEntry[]; }; } = {};
+    const REPORT_INTERVAL = Math.max(1, Math.floor(totalEntries / 100));
+    const grouped: Record<string, Record<string, BucketItem[]>> = {};
 
     onProgress?.(25, 100, "Processing entries...");
 
     for (let i = 0; i < termBank.length; i++) {
-        const entry = termBank[i];
-
-        // Report progress periodically
-        if (i % REPORT_INTERVAL === 0 || i === termBank.length - 1) {
-            const progress = 25 + Math.floor((i / totalEntries) * 50);
-            onProgress?.(progress, 100, `Processing entries... (${i + 1}/${totalEntries})`);
+        if (i % REPORT_INTERVAL === 0 || i === totalEntries - 1) {
+            onProgress?.(25 + Math.floor((i / totalEntries) * 50), 100, `Processing entries... (${i + 1}/${totalEntries})`);
         }
 
-        // Yomichan format: [term, reading, definitionTags, ruleIdentifiers, score, definitions, sequence, termTags]
-        const [term, reading, defTags, rules, score, definitions, sequence, termTags] = entry;
-
+        const [term, reading, , , score, definitions, , termTags] = termBank[i];
         const dictEntry: DictionaryEntry = {
             term,
             reading: reading || term,
@@ -857,99 +448,55 @@ async function processTermBank(dictionaryName: string, termBank: any[], onProgre
             score: score || 0
         };
 
-        // Index by term (e.g., "御早" or "おはよう")
-        const termFirstChar = term[0];
-        if (!grouped[termFirstChar]) {
-            grouped[termFirstChar] = {};
-        }
-        if (!grouped[termFirstChar][term]) {
-            grouped[termFirstChar][term] = [];
-        }
-        grouped[termFirstChar][term].push(dictEntry);
+        const termBucket = grouped[term[0]] ??= {};
+        (termBucket[term] ??= []).push(dictEntry);
 
-        // ALSO index by reading if different from term
-        // This allows searching "おはよう" to find "御早"
         if (reading && reading !== term) {
-            const readingFirstChar = reading[0];
-            if (!grouped[readingFirstChar]) {
-                grouped[readingFirstChar] = {};
-            }
-            if (!grouped[readingFirstChar][reading]) {
-                grouped[readingFirstChar][reading] = [];
-            }
-            grouped[readingFirstChar][reading].push(dictEntry);
+            const readingBucket = grouped[reading[0]] ??= {};
+            const refs = readingBucket[reading] ??= [];
+            if (!refs.includes(term)) refs.push(term);
         }
     }
 
     onProgress?.(75, 100, "Storing to database...");
 
-    // Store each group
     const firstChars = Object.keys(grouped);
     for (let i = 0; i < firstChars.length; i++) {
         const firstChar = firstChars[i];
-        const key = `${DICTIONARY_KEY}_${dictionaryName}_${firstChar}`;
-
-        // Report progress for storage
         if (i % Math.max(1, Math.floor(firstChars.length / 10)) === 0 || i === firstChars.length - 1) {
-            const progress = 75 + Math.floor((i / firstChars.length) * 20); // 75-95% range
-            onProgress?.(progress, 100, `Storing to database... (${i + 1}/${firstChars.length} groups)`);
+            onProgress?.(75 + Math.floor((i / firstChars.length) * 20), 100, `Storing to database... (${i + 1}/${firstChars.length} groups)`);
         }
 
-        // Merge with existing data if any
-        const existing = await DataStore.get(key) || {};
-        const merged: { [term: string]: DictionaryEntry[]; } = { ...existing };
+        const key = `${DICTIONARY_KEY}_${dictionaryName}_${firstChar}`;
+        const merged: Bucket = { ...await DataStore.get<Bucket>(key) };
 
-        // Properly merge arrays for terms that exist in both
-        for (const term in grouped[firstChar]) {
-            if (merged[term] && Array.isArray(merged[term])) {
-                // Merge arrays: combine existing entries with new ones
-                const existingEntries = merged[term] as DictionaryEntry[];
-                const newEntries = grouped[firstChar][term] as DictionaryEntry[];
-
-                // Create a Set to track unique entries (term|reading pairs)
-                const seen = new Set<string>();
-                const combined: DictionaryEntry[] = [];
-
-                // Add existing entries
-                for (const entry of existingEntries) {
-                    const entryKey = `${entry.term}|${entry.reading}`;
-                    if (!seen.has(entryKey)) {
-                        seen.add(entryKey);
-                        combined.push(entry);
+        for (const groupKey in grouped[firstChar]) {
+            const existing = merged[groupKey];
+            if (Array.isArray(existing)) {
+                const seenItems = new Set(existing.map(itemKey));
+                for (const item of grouped[firstChar][groupKey]) {
+                    const k = itemKey(item);
+                    if (!seenItems.has(k)) {
+                        seenItems.add(k);
+                        existing.push(item);
                     }
                 }
-
-                // Add new entries
-                for (const entry of newEntries) {
-                    const entryKey = `${entry.term}|${entry.reading}`;
-                    if (!seen.has(entryKey)) {
-                        seen.add(entryKey);
-                        combined.push(entry);
-                    }
-                }
-
-                merged[term] = combined;
             } else {
-                // New term, just assign it
-                merged[term] = grouped[firstChar][term];
+                merged[groupKey] = grouped[firstChar][groupKey];
             }
         }
 
         await DataStore.set(key, merged);
     }
-
 }
 
-/**
- * Deletes a dictionary
- */
 export async function deleteDictionary(dictionaryName: string): Promise<void> {
     const index = await getDictionaryIndex();
     delete index[dictionaryName];
     await DataStore.set(DICTIONARY_INDEX_KEY, index);
 
     const priorities = await getDictionaryPriorities();
-    if (Object.keys(priorities).length > 0) {
+    if (dictionaryName in priorities) {
         delete priorities[dictionaryName];
         await setDictionaryPriorities(priorities);
     }
@@ -957,62 +504,35 @@ export async function deleteDictionary(dictionaryName: string): Promise<void> {
     const prefix = `${DICTIONARY_KEY}_${dictionaryName}_`;
     const allKeys = await DataStore.keys<string>();
     const keysToDelete = allKeys.filter(key => key.startsWith(prefix));
-
     if (keysToDelete.length > 0) {
         await DataStore.delMany(keysToDelete);
     }
+
+    dataStoreCache.clear();
+    searchCache.clear();
 }
 
-/**
- * Gets list of installed dictionaries in priority order (lower number = first)
- */
 export async function getInstalledDictionaries(): Promise<string[]> {
     const index = await getDictionaryIndex();
-    const names = Object.keys(index);
     const priorities = await getDictionaryPriorities();
-    return sortDictionariesByPriority(names, priorities);
+    return sortDictionariesByPriority(Object.keys(index), priorities);
 }
 
-/**
- * Finds all orphaned dictionary keys (keys that don't match any dictionary in the index)
- * Useful for cleaning up data from deleted dictionaries
- */
-export async function findOrphanedDictionaryKeys(): Promise<string[]> {
-    const index = await getDictionaryIndex();
-    const installedDictNames = new Set(Object.keys(index));
-    const allKeys = await DataStore.keys<string>();
-    const prefix = `${DICTIONARY_KEY}_`;
-
-    // Find all dictionary-related keys
-    const dictKeys = allKeys.filter(key => key.startsWith(prefix));
-
-    // Find keys that don't belong to any installed dictionary
-    const orphaned: string[] = [];
-    for (const key of dictKeys) {
-        // Extract dictionary name from key: Yomicord_Dictionaries_${dictName}_${firstChar}
-        const afterPrefix = key.substring(prefix.length);
-        const underscoreIndex = afterPrefix.indexOf('_');
-        if (underscoreIndex === -1) continue;
-
-        const dictName = afterPrefix.substring(0, underscoreIndex);
-        if (!installedDictNames.has(dictName)) {
-            orphaned.push(key);
-        }
-    }
-
-    return orphaned;
-}
-
-/**
- * Cleans up all orphaned dictionary keys
- * Returns the number of keys deleted
- */
 export async function cleanupOrphanedDictionaryKeys(): Promise<number> {
-    const orphaned = await findOrphanedDictionaryKeys();
+    const index = await getDictionaryIndex();
+    const installed = new Set(Object.keys(index));
+    const prefix = `${DICTIONARY_KEY}_`;
+    const allKeys = await DataStore.keys<string>();
+
+    const orphaned = allKeys.filter(key => {
+        if (!key.startsWith(prefix)) return false;
+        const afterPrefix = key.substring(prefix.length);
+        const sep = afterPrefix.lastIndexOf("_");
+        return sep !== -1 && !installed.has(afterPrefix.substring(0, sep));
+    });
+
     if (orphaned.length > 0) {
         await DataStore.delMany(orphaned);
     }
     return orphaned.length;
 }
-
-
