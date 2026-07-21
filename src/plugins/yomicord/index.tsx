@@ -13,7 +13,7 @@ import definePlugin, { OptionType } from "@utils/types";
 import { findByCodeLazy } from "@webpack";
 import { createRoot, React, scrollerClasses } from "@webpack/common";
 
-import { cleanupOrphanedDictionaryKeys, type DictionaryEntry, getDictionaryPriorities, lookupTerm, sortDictionariesByPriority } from "./dictionary";
+import { cleanupOrphanedDictionaryKeys, type DictionaryEntry, getDictionaryPriorities, lookupTerm, sortDictionariesByPriority, updateDictionaryPriority } from "./dictionary";
 import { DictionarySettings } from "./DictionarySettings";
 import { getTextAtPoint } from "./textScanner";
 import { normalizeDefinition } from "./utils";
@@ -68,6 +68,7 @@ interface Tooltip {
     reactRoot: ReturnType<typeof createRoot> | null;
     lookupId: number;
     anchor: { x: number; y: number; } | null;
+    dragged: boolean;
 }
 
 const tooltips = new Map<number, Tooltip>();
@@ -117,7 +118,73 @@ function createTooltip(level: number): Tooltip {
     container.append(header, content);
     document.body.appendChild(container);
 
-    return { container, header, tabs, content, removalTimeout: null, reactRoot: null, lookupId: 0, anchor: null };
+    const tooltip: Tooltip = { container, header, tabs, content, removalTimeout: null, reactRoot: null, lookupId: 0, anchor: null, dragged: false };
+    header.addEventListener("mousedown", e => {
+        if ((e.target as Element).closest("button")) return;
+        dragTooltip(tooltip, e);
+    });
+    return tooltip;
+}
+
+function dragTooltip(tooltip: Tooltip, e: MouseEvent) {
+    e.preventDefault();
+    const { container } = tooltip;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    container.style.willChange = "transform";
+    const onMove = (ev: MouseEvent) => {
+        tooltip.dragged = true;
+        container.style.transform = `translate(${ev.clientX - startX}px, ${ev.clientY - startY}px)`;
+    };
+    const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        const rect = container.getBoundingClientRect();
+        container.style.transform = "";
+        container.style.willChange = "";
+        container.style.left = `${rect.left}px`;
+        container.style.top = `${rect.top}px`;
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+}
+
+function dragTab(tab: HTMLButtonElement, dictNames: string[], e: MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    let dragging = false;
+    const onMove = (ev: MouseEvent) => {
+        if (!dragging && Math.abs(ev.clientX - startX) < 5) return;
+        dragging = true;
+        tab.classList.add("dragging");
+        for (const sibling of tab.parentElement?.children ?? []) {
+            if (sibling === tab) continue;
+            const rect = sibling.getBoundingClientRect();
+            if (ev.clientX < rect.left || ev.clientX > rect.right) continue;
+            tab.parentElement!.insertBefore(tab, ev.clientX < rect.left + rect.width / 2 ? sibling : sibling.nextSibling);
+            break;
+        }
+    };
+    const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        if (!dragging) return;
+        tab.classList.remove("dragging");
+        tab.dataset.suppressClick = "true";
+        if (!tab.parentElement) return;
+        const order = [...tab.parentElement.children].map(c => c.textContent ?? "");
+        dictNames.splice(0, dictNames.length, ...order);
+        void persistDictOrder(order);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+}
+
+async function persistDictOrder(order: string[]) {
+    const priorities = await getDictionaryPriorities();
+    let nextDefault = Math.max(0, ...Object.values(priorities)) + 1;
+    const values = order.map(name => priorities[name] ?? nextDefault++).sort((a, b) => a - b);
+    for (let i = 0; i < order.length; i++) await updateDictionaryPriority(order[i], values[i]);
 }
 
 function showTooltip(x: number, y: number, content: string | HTMLElement, level: number, activeDict?: string, dictNames?: string[], onSwapDictionary?: (dict: string) => void) {
@@ -133,6 +200,7 @@ function showTooltip(x: number, y: number, content: string | HTMLElement, level:
         tooltips.set(level, tooltip);
     }
 
+    const tip = tooltip;
     tooltip.tabs.innerHTML = "";
     if (dictNames) {
         const clickable = dictNames.length > 1;
@@ -145,9 +213,17 @@ function showTooltip(x: number, y: number, content: string | HTMLElement, level:
             if (clickable && onSwapDictionary) {
                 tab.onclick = e => {
                     e.stopPropagation();
+                    if (tab.dataset.suppressClick) {
+                        delete tab.dataset.suppressClick;
+                        return;
+                    }
                     onSwapDictionary(dictName);
                 };
             }
+            tab.onmousedown = e => {
+                if (clickable) dragTab(tab, dictNames, e);
+                else dragTooltip(tip, e);
+            };
             tooltip.tabs.appendChild(tab);
         }
     }
@@ -158,13 +234,39 @@ function showTooltip(x: number, y: number, content: string | HTMLElement, level:
     if (typeof content === "string") tooltip.content.textContent = content;
     else tooltip.content.appendChild(content);
 
+    const { container } = tooltip;
     const isLoading = content instanceof HTMLElement && content.classList.contains("yomicord-loading");
+    if (isLoading) {
+        tooltip.dragged = false;
+        container.style.width = "";
+        container.style.height = "";
+    }
     tooltip.header.style.display = isLoading ? "none" : "flex";
 
-    const { container } = tooltip;
-    container.style.display = "block";
+    container.style.display = "flex";
     container.style.opacity = "1";
 
+    if (!isLoading && container.style.width) {
+        const currentHeight = parseFloat(container.style.height);
+        const naturalHeight = tooltip.header.offsetHeight + tooltip.content.scrollHeight + 2;
+        const targetHeight = Math.max(currentHeight, Math.min(naturalHeight, 220));
+        if (targetHeight > currentHeight) {
+            container.style.height = `${targetHeight}px`;
+            const top = parseFloat(container.style.top);
+            if (top + targetHeight > window.innerHeight - 10) {
+                container.style.top = `${Math.max(10, window.innerHeight - 10 - targetHeight)}px`;
+            }
+        }
+        return;
+    }
+
+    if (!isLoading) {
+        const rect = container.getBoundingClientRect();
+        container.style.width = `${rect.width}px`;
+        container.style.height = `${rect.height}px`;
+    }
+
+    if (tooltip.dragged) return;
     let left = x + 15;
     let top = y + 15;
     const rect = container.getBoundingClientRect();
@@ -201,6 +303,7 @@ function isInsideTooltip(element: Element | null): { isInside: boolean; popupLev
 
 function handleMouseMove(e: MouseEvent) {
     if (mouseMoveTimeout !== null) clearTimeout(mouseMoveTimeout);
+    if (!isScanKeyPressed(e)) return;
     mouseMoveTimeout = window.setTimeout(() => {
         mouseMoveTimeout = null;
         void handleMouseMoveDebounced(e);
@@ -216,7 +319,6 @@ async function handleMouseMoveDebounced(e: MouseEvent) {
         if (popupLevel > settings.store.maxPopupNesting) return;
         if (target?.closest('[data-yomicord-entry="true"]')) return;
     }
-    if (!isScanKeyPressed(e)) return;
 
     const currentLevel = isInside ? popupLevel - 1 : 0;
     let anchor = tooltips.get(currentLevel)?.anchor ?? null;
