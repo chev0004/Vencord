@@ -6,8 +6,8 @@
 
 import "./styles.css";
 
-import { ModalCloseButton, ModalContent, ModalFooter, ModalHeader, ModalProps, ModalRoot } from "@utils/modal";
 import { getTheme, Theme } from "@utils/discord";
+import { ModalCloseButton, ModalContent, ModalFooter, ModalHeader, type ModalProps, ModalRoot } from "@utils/modal";
 import { Channel } from "@vencord/discord-types";
 import { Button, Forms, GuildStore, showToast, TextInput, Toasts, useState } from "@webpack/common";
 

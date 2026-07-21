@@ -19,6 +19,8 @@
 import { filters, mapMangledModuleLazy } from "@webpack";
 import { closeAllModals, closeModal, openMediaModal, openModal, openModalLazy } from "@webpack/common";
 
+export type { RenderModalProps as ModalProps } from "@vencord/discord-types";
+
 import { LazyComponent } from "./react";
 
 /** @deprecated Migrate to new Modals */
@@ -39,15 +41,15 @@ export const Modals = mapMangledModuleLazy(".MODAL_ROOT_LEGACY,", {
 }) as never;
 
 /** @deprecated Migrate to new Modals */
-export const ModalRoot = LazyComponent(() => (Modals as any).ModalRoot) as never;
+export const ModalRoot = LazyComponent(() => (Modals as any).ModalRoot);
 /** @deprecated Migrate to new Modals */
-export const ModalHeader = LazyComponent(() => (Modals as any).ModalHeader) as never;
+export const ModalHeader = LazyComponent(() => (Modals as any).ModalHeader);
 /** @deprecated Migrate to new Modals */
-export const ModalContent = LazyComponent(() => (Modals as any).ModalContent) as never;
+export const ModalContent = LazyComponent(() => (Modals as any).ModalContent);
 /** @deprecated Migrate to new Modals */
-export const ModalFooter = LazyComponent(() => (Modals as any).ModalFooter) as never;
+export const ModalFooter = LazyComponent(() => (Modals as any).ModalFooter);
 /** @deprecated Migrate to new Modals */
-export const ModalCloseButton = LazyComponent(() => (Modals as any).ModalCloseButton) as never;
+export const ModalCloseButton = LazyComponent(() => (Modals as any).ModalCloseButton);
 
 /** @deprecated Migrate to new Modals */
 export const ModalAPI = {
