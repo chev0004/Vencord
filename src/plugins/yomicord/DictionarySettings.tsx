@@ -12,11 +12,28 @@ import { Span } from "@components/Span";
 import { Alerts, TextInput, Toasts, useEffect, useRef, useState } from "@webpack/common";
 
 import { deleteDictionary, getDictionaryPriorities, getInstalledDictionaries, importMultipleDictionaryFiles, updateDictionaryPriority } from "./dictionary";
+import { readZipEntries } from "./zip";
+
+const TERM_BANK_REGEX = /^term_bank_\d+\.json$/;
+
+async function extractDictionaryZip(zip: File): Promise<{ title?: string; termBanks: File[]; }> {
+    const termBanks: File[] = [];
+    let title: string | undefined;
+    for (const entry of await readZipEntries(zip)) {
+        const baseName = entry.name.split("/").pop()!;
+        if (TERM_BANK_REGEX.test(baseName)) {
+            termBanks.push(new File([await entry.text()], baseName));
+        } else if (baseName === "index.json") {
+            title = JSON.parse(await entry.text()).title;
+        }
+    }
+    if (termBanks.length === 0) throw new Error(`No term_bank_*.json files found in ${zip.name}`);
+    return { title, termBanks };
+}
 
 export function DictionarySettings() {
     const [dictionaries, setDictionaries] = useState<string[]>([]);
     const [priorities, setPriorities] = useState<Record<string, number>>({});
-    const [dictionaryName, setDictionaryName] = useState("JMdict");
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState<{ current: number; total: number; stage: string; } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -39,25 +56,24 @@ export function DictionarySettings() {
         setProgress({ current: 0, total: 100, stage: "Starting..." });
 
         try {
-            const result = await importMultipleDictionaryFiles(
-                Array.from(files),
-                dictionaryName,
-                (current, total, stage) => setProgress({ current, total, stage })
-            );
-            if (result.success) {
+            for (const zip of Array.from(files)) {
+                setProgress({ current: 0, total: 100, stage: `Extracting ${zip.name}...` });
+                const { title, termBanks } = await extractDictionaryZip(zip);
+                const name = title?.trim() || zip.name.replace(/\.zip$/i, "");
+
+                const result = await importMultipleDictionaryFiles(
+                    termBanks,
+                    name,
+                    (current, total, stage) => setProgress({ current, total, stage })
+                );
+                if (!result.success) throw new Error(result.error ?? "Import failed");
                 Toasts.show({
-                    message: `Imported ${result.imported} file(s) into "${dictionaryName}"`,
+                    message: `Imported "${name}" (${result.imported} file(s))`,
                     id: Toasts.genId(),
                     type: Toasts.Type.SUCCESS
                 });
-                await loadDictionaries();
-            } else {
-                Toasts.show({
-                    message: `Failed to import: ${result.error}`,
-                    id: Toasts.genId(),
-                    type: Toasts.Type.FAILURE
-                });
             }
+            await loadDictionaries();
         } catch (error) {
             Toasts.show({
                 message: `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
@@ -101,40 +117,33 @@ export function DictionarySettings() {
             <section>
                 <Heading tag="h3">Dictionary Management</Heading>
                 <Paragraph>
-                    Upload Yomichan-compatible dictionary JSON files (term_bank_*.json)
+                    Import Yomichan-compatible dictionary ZIPs
                 </Paragraph>
                 <Divider style={{ marginTop: "1em", marginBottom: "1em" }} />
 
                 <Heading tag="h5">Import Dictionary</Heading>
-                <TextInput
-                    placeholder="Dictionary Name (e.g., JMdict)"
-                    value={dictionaryName}
-                    onChange={setDictionaryName}
-                    style={{ marginBottom: "10px" }}
-                />
-
-                <div style={{ marginBottom: "20px" }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "8px", margin: "12px 0 20px" }}>
                     <input
                         ref={fileInputRef}
                         type="file"
-                        accept=".json"
+                        accept=".zip"
                         multiple
                         onChange={handleFileUpload}
                         style={{ display: "none" }}
                     />
                     <Button
-                        disabled={uploading || !dictionaryName.trim()}
+                        disabled={uploading}
                         onClick={() => fileInputRef.current?.click()}
                         size="small"
                     >
-                        {uploading ? "Importing..." : "Select JSON File(s)"}
+                        {uploading ? "Importing..." : "Import Dictionary ZIP(s)"}
                     </Button>
-                    <Span style={{ marginTop: "8px", fontSize: "0.9em", color: "var(--text-muted)" }}>
-                        You can select multiple term_bank files at once
+                    <Span style={{ fontSize: "0.9em", color: "var(--text-muted)" }}>
+                        Dictionaries are named automatically from the ZIP
                     </Span>
 
                     {progress && (
-                        <div style={{ marginTop: "12px" }}>
+                        <div style={{ width: "100%", marginTop: "4px" }}>
                             <div style={{
                                 display: "flex",
                                 justifyContent: "space-between",
@@ -172,7 +181,7 @@ export function DictionarySettings() {
                 <Heading tag="h5">Installed Dictionaries</Heading>
                 {dictionaries.length === 0 ? (
                     <Paragraph style={{ color: "var(--text-muted)" }}>
-                        No dictionaries installed yet. Upload dictionary files above to get started.
+                        No dictionaries installed yet. Import a dictionary ZIP above to get started.
                     </Paragraph>
                 ) : (
                     <div>
@@ -226,9 +235,7 @@ export function DictionarySettings() {
                 <Heading tag="h5">How to Get Dictionaries</Heading>
                 <Paragraph>
                     1. Download a Yomichan dictionary (e.g., JMdict) from <a href="https://github.com/themoeway/jmdict-yomitan" target="_blank" rel="noreferrer">here</a><br />
-                    2. Extract the ZIP file<br />
-                    3. Upload the term_bank_*.json files using the button above<br />
-                    4. You can upload multiple files at once!
+                    2. Upload the ZIP directly using the button above — no need to extract
                 </Paragraph>
             </section>
         </div>
