@@ -25,14 +25,24 @@ function getTransformer(): LanguageTransformer {
     return transformer;
 }
 
-function getDeinflectionCandidates(text: string): string[] {
-    const candidates = [text];
+function mergeConditions(a: number, b: number): number {
+    return a === 0 || b === 0 ? 0 : a | b;
+}
+
+function getDeinflectionCandidates(text: string): Map<string, number> {
+    const candidates = new Map<string, number>();
     for (const result of getTransformer().transform(text)) {
-        if (result.text !== text && !candidates.includes(result.text)) {
-            candidates.push(result.text);
-        }
+        if (result.text === text) continue;
+        const existing = candidates.get(result.text);
+        candidates.set(result.text, existing === undefined ? result.conditions : mergeConditions(existing, result.conditions));
     }
     return candidates;
+}
+
+function deinflectionMatchesEntry(conditions: number, entry: DictionaryEntry): boolean {
+    if (entry.rules === undefined) return true;
+    const entryFlags = getTransformer().getConditionFlagsFromPartsOfSpeech(entry.rules);
+    return LanguageTransformer.conditionsMatch(conditions, entryFlags);
 }
 
 export interface DictionaryEntry {
@@ -40,6 +50,7 @@ export interface DictionaryEntry {
     reading: string;
     definitions: string[];
     tags: string[];
+    rules?: string[];
     score: number;
     dictionary?: string;
 }
@@ -199,7 +210,14 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
     for (let originalTextLength = text.length; originalTextLength > 0; originalTextLength--) {
         const searchText = text.substring(0, originalTextLength);
         const searchTextHiragana = convertKatakanaToHiragana(searchText);
-        const searchVariants = searchText !== searchTextHiragana ? [searchText, searchTextHiragana] : [searchText];
+        const variants = [searchText, searchTextHiragana];
+        if (!isEmphaticChar(searchText[searchText.length - 1])) {
+            variants.push(
+                collapseEmphaticSequences(searchText),
+                collapseEmphaticSequences(searchTextHiragana)
+            );
+        }
+        const searchVariants = [...new Set(variants)].filter(v => v.length > 0);
         let foundAtThisLength = false;
 
         const exactResults = await Promise.all(searchVariants.flatMap(variant =>
@@ -213,8 +231,8 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
                     : entry.term.startsWith(variant);
                 if (!matches) continue;
 
-                const isExactMatch = entry.term === searchText || entry.term === searchTextHiragana ||
-                    entry.reading === searchText || entry.reading === searchTextHiragana;
+                const isExactMatch = searchVariants.includes(entry.term) ||
+                    (!!entry.reading && searchVariants.includes(entry.reading));
                 if (addResult(dictName, entry, originalTextLength, false, isExactMatch)) {
                     foundAtThisLength = true;
                     if (hasKanji && KANJI_REGEX.test(entry.term)) {
@@ -228,12 +246,15 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
             resultsWithLength.some(r => r.originalTextLength === originalTextLength && r.readingExactMatch && !r.fromDeinflection);
 
         if (!shouldSkipDeinflections) {
-            const deinflections = new Set<string>();
+            const deinflections = new Map<string, number>();
             for (const variant of searchVariants) {
-                for (const deinflected of getDeinflectionCandidates(variant)) deinflections.add(deinflected);
+                for (const [deinflected, conditions] of getDeinflectionCandidates(variant)) {
+                    const existing = deinflections.get(deinflected);
+                    deinflections.set(deinflected, existing === undefined ? conditions : mergeConditions(existing, conditions));
+                }
             }
 
-            for (const deinflected of deinflections) {
+            for (const [deinflected, conditions] of deinflections) {
                 if (searchVariants.includes(deinflected)) continue;
 
                 const deinflectResults = await Promise.all(dictNames.map(async dictName =>
@@ -243,6 +264,7 @@ export async function lookupTerm(text: string): Promise<DictionaryEntry[]> {
                 for (const { dictName, entries } of deinflectResults) {
                     for (const entry of entries) {
                         if (entry.term !== deinflected && entry.reading !== deinflected) continue;
+                        if (!deinflectionMatchesEntry(conditions, entry)) continue;
                         if (addResult(dictName, entry, originalTextLength, true, entry.reading === deinflected)) {
                             foundAtThisLength = true;
                             if (hasKanji && KANJI_REGEX.test(entry.term)) {
@@ -364,6 +386,18 @@ function getCommonPrefix(str1: string, str2: string): string {
     return str1.substring(0, i);
 }
 
+const isEmphaticChar = (char: string) => char === "っ" || char === "ッ" || char === "ー";
+
+function collapseEmphaticSequences(text: string): string {
+    let result = "";
+    let prev = "";
+    for (const char of text) {
+        if (!(isEmphaticChar(char) && char === prev)) result += char;
+        prev = char;
+    }
+    return result;
+}
+
 function convertKatakanaToHiragana(text: string): string {
     return text.replace(/[゠-ヿ]/g, char => {
         const code = char.charCodeAt(0);
@@ -439,12 +473,13 @@ async function processTermBank(dictionaryName: string, termBank: any[], onProgre
             onProgress?.(25 + Math.floor((i / totalEntries) * 50), 100, `Processing entries... (${i + 1}/${totalEntries})`);
         }
 
-        const [term, reading, , , score, definitions, , termTags] = termBank[i];
+        const [term, reading, , rules, score, definitions, , termTags] = termBank[i];
         const dictEntry: DictionaryEntry = {
             term,
             reading: reading || term,
             definitions: Array.isArray(definitions) ? definitions : [definitions],
             tags: termTags || [],
+            rules: typeof rules === "string" ? rules.split(" ").filter(Boolean) : [],
             score: score || 0
         };
 
@@ -473,12 +508,15 @@ async function processTermBank(dictionaryName: string, termBank: any[], onProgre
         for (const groupKey in grouped[firstChar]) {
             const existing = merged[groupKey];
             if (Array.isArray(existing)) {
-                const seenItems = new Set(existing.map(itemKey));
+                const seenItems = new Map(existing.map((item, idx) => [itemKey(item), idx]));
                 for (const item of grouped[firstChar][groupKey]) {
                     const k = itemKey(item);
-                    if (!seenItems.has(k)) {
-                        seenItems.add(k);
+                    const idx = seenItems.get(k);
+                    if (idx === undefined) {
+                        seenItems.set(k, existing.length);
                         existing.push(item);
+                    } else {
+                        existing[idx] = item;
                     }
                 }
             } else {
