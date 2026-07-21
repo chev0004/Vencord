@@ -210,26 +210,55 @@ const ensureStickerGuild = async (): Promise<string | null> => {
         return null;
     }
 };
-const uploadAndReplaceSticker = async (
+const MAX_SLOTS = 4;
+
+interface StickerSlot {
+    id: string;
+    localId: string;
+    name: string;
+}
+
+const getSlots = (): StickerSlot[] => {
+    const entry = getAccountGuildEntry();
+    if (!entry) return [];
+    if (!entry.slots) {
+        entry.slots = entry.slotId ? [{ id: entry.slotId, localId: "", name: "" }] : [];
+        entry.slotId = null;
+    }
+    return entry.slots;
+};
+
+const takeCachedSlot = (file: StickerFile): string | null => {
+    const slots = getSlots();
+    const index = slots.findIndex(s => s.localId === file.id && s.name === file.name);
+    if (index === -1) return null;
+    const [slot] = slots.splice(index, 1);
+    slots.unshift(slot);
+    return slot.id;
+};
+
+const dropSlot = (slotId: string) => {
+    const slots = getSlots();
+    const index = slots.findIndex(s => s.id === slotId);
+    if (index !== -1) slots.splice(index, 1);
+};
+
+const uploadSticker = async (
     guildId: string,
-    stickerName: string,
+    file: StickerFile,
     stickerBlob: Blob,
 ): Promise<string | null> => {
-    const entry = getAccountGuildEntry();
-    const currentStickerId = entry?.slotId;
-    if (currentStickerId) {
-        try {
-            await RestAPI.del({
-                url: `/guilds/${guildId}/stickers/${currentStickerId}`,
-            });
-        } catch (e) {
-            logger.warn("Could not delete old sticker slot.", e);
-        }
+    const slots = getSlots();
+    while (slots.length >= MAX_SLOTS) {
+        const evicted = slots.pop()!;
+        RestAPI.del({
+            url: `/guilds/${guildId}/stickers/${evicted.id}`,
+        }).catch(e => logger.warn("Could not delete old sticker slot.", e));
     }
 
     try {
         const formData = new FormData();
-        const safeStickerNameChars = Array.from(stickerName.trim()).slice(0, 30);
+        const safeStickerNameChars = Array.from(file.name.trim()).slice(0, 30);
         while (safeStickerNameChars.length < 2) safeStickerNameChars.push("_");
         const safeStickerName = safeStickerNameChars.join("");
         formData.append("name", safeStickerName);
@@ -247,7 +276,7 @@ const uploadAndReplaceSticker = async (
             url: `/guilds/${guildId}/stickers`,
             body: formData,
         });
-        if (entry) entry.slotId = newSticker.body.id;
+        slots.unshift({ id: newSticker.body.id, localId: file.id, name: file.name });
         return newSticker.body.id;
     } catch (error) {
         logger.error("Failed to upload new sticker:", error);
@@ -494,46 +523,50 @@ const StickerGridItem = LazyComponent<StickerGridItemProps>(() => React.memo(({
             if (isSending || !blob || isClosingRef.current) return;
             setIsSending(true);
 
-            try {
-                const newStickerId = await uploadAndReplaceSticker(
-                    guildId,
-                    file.name,
-                    blob,
-                );
+            const send = async (stickerId: string): Promise<boolean> => {
+                const reply = PendingReplyStore.getPendingReply(channel.id);
+                let sendOptions: any = { stickerIds: [stickerId] };
 
-                if (isClosingRef.current) {
-                    setIsSending(false);
-                    return;
+                if (reply) {
+                    const replyOptions = MessageActions.getSendMessageOptionsForReply(reply);
+                    sendOptions = { ...replyOptions, ...sendOptions };
                 }
 
-                if (newStickerId) {
-                    const reply = PendingReplyStore.getPendingReply(channel.id);
-                    let sendOptions: any = { stickerIds: [newStickerId] };
-
-                    if (reply) {
-                        const replyOptions = MessageActions.getSendMessageOptionsForReply(reply);
-                        sendOptions = { ...replyOptions, ...sendOptions };
-                    }
-
-                    await MessageActions.sendMessage(channel.id, { content: "" }, false, sendOptions);
-
-                    if (isClosingRef.current) {
-                        setIsSending(false);
-                        return;
-                    }
-
-                    if (reply) {
-                        FluxDispatcher.dispatch({ type: "DELETE_PENDING_REPLY", channelId: channel.id });
-                    }
-
-                    onStickerSent(file);
-                    closePopout();
-                } else {
-                    setIsSending(false);
+                try {
+                    const result = await MessageActions.sendMessage(channel.id, { content: "" }, false, sendOptions);
+                    if (result?.ok === false) return false;
+                } catch (error) {
+                    logger.error("Error sending sticker:", error);
+                    return false;
                 }
-            } catch (error) {
-                logger.error("Error sending sticker:", error);
-                if (!isClosingRef.current) setIsSending(false);
+
+                if (reply && !isClosingRef.current) {
+                    FluxDispatcher.dispatch({ type: "DELETE_PENDING_REPLY", channelId: channel.id });
+                }
+                return true;
+            };
+
+            const cachedId = takeCachedSlot(file);
+            const stickerId = cachedId ?? await uploadSticker(guildId, file, blob);
+
+            if (!stickerId || isClosingRef.current) {
+                setIsSending(false);
+                return;
+            }
+
+            let sent = await send(stickerId);
+
+            if (!sent && cachedId && !isClosingRef.current) {
+                dropSlot(cachedId);
+                const freshId = await uploadSticker(guildId, file, blob);
+                sent = !!freshId && await send(freshId);
+            }
+
+            if (sent && !isClosingRef.current) {
+                onStickerSent(file);
+                closePopout();
+            } else {
+                setIsSending(false);
             }
         };
 

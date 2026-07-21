@@ -641,7 +641,11 @@ export const settings = definePluginSettings({
 }).withPrivateSettings<{
     stickerGuildId: string | null;
     stickerSlotId: string | null;
-    accountGuilds: Record<string, { guildId: string; slotId: string | null; }>;
+    accountGuilds: Record<string, {
+        guildId: string;
+        slotId: string | null;
+        slots?: { id: string; localId: string; name: string; }[];
+    }>;
 }>();
 
 let libraryCache: StickerCategory[] | null = null;
