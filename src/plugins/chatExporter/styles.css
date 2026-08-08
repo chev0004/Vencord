@@ -1,5 +1,3 @@
-/* ── Export modal ─────────────────────────────────────── */
-
 .vc-ce-modal-header {
     place-content: center space-between;
 }
@@ -30,30 +28,6 @@
     margin-bottom: 8px;
 }
 
-.vc-ce-date-input {
-    background-color: var(--input-background-default);
-    color: var(--text-default);
-    width: 100%;
-    padding: 10px 12px;
-    outline: none;
-    border: 1px solid var(--input-background-default);
-    border-radius: 4px;
-    font-weight: 500;
-    font-size: 16px;
-    line-height: 1.375;
-    box-sizing: border-box;
-    transition: border-color 0.15s;
-}
-
-.vc-ce-date-input:focus {
-    border-color: var(--text-link);
-}
-
-.vc-ce-date-input:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
 .vc-ce-progress {
     margin: 0;
     font-size: 14px;
@@ -68,9 +42,21 @@
     width: 100%;
 }
 
-/* ── Message selection checkboxes ────────────────────── */
+.vc-ce-dm-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
 
-/* Ensure message articles can contain absolutely-positioned children */
+.vc-ce-dm-picker h5,
+.vc-ce-dm-picker p {
+    margin: 0;
+}
+
+.vc-ce-dm-list {
+    max-height: 360px;
+}
+
 [id^="chat-messages-"] {
     position: relative;
 }
@@ -102,21 +88,19 @@
     color: var(--white-500);
 }
 
-.vc-ce-msg-checkbox:hover .vc-ce-msg-checkbox-inner {
-    border-color: var(--brand-500);
-}
-
 .vc-ce-msg-checkbox-checked .vc-ce-msg-checkbox-inner {
     background: var(--brand-500);
     border-color: var(--brand-500);
 }
 
-/* Shift content right to make room for checkboxes */
+.vc-ce-msg-checkbox:hover .vc-ce-msg-checkbox-inner {
+    border-color: var(--brand-500);
+}
+
 .vc-ce-selecting [id^="chat-messages-"] > * {
     padding-left: 44px;
 }
 
-/* Selection bar buttons */
 .vc-ce-confirm-btn {
     color: var(--brand-500) !important;
 }
