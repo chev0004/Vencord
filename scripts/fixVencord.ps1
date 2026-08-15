@@ -87,6 +87,17 @@ function Assert-Patched([string] $AppDirectory) {
     }
 }
 
+function Install-Vencord {
+    $env:VENCORD_USER_DATA_DIR = $repo
+    $env:VENCORD_DEV_INSTALL = "1"
+    try {
+        Invoke-Checked $installer @("-install", "-branch", "stable", "-debug")
+    } finally {
+        Remove-Item Env:VENCORD_USER_DATA_DIR -ErrorAction SilentlyContinue
+        Remove-Item Env:VENCORD_DEV_INSTALL -ErrorAction SilentlyContinue
+    }
+}
+
 function Start-Discord {
     if (-not (Test-Path $discordUpdater)) {
         throw "Discord updater was not found at $discordUpdater"
@@ -241,9 +252,7 @@ try {
     }
 
     Stop-Discord
-    $env:VENCORD_USER_DATA_DIR = $repo
-    $env:VENCORD_DEV_INSTALL = "1"
-    Invoke-Checked $installer @("-install", "-branch", "stable", "-debug")
+    Install-Vencord
     $installedApp = Get-LatestDiscordApp
     Assert-Patched $installedApp.FullName
 
@@ -256,7 +265,7 @@ try {
     } catch {
         Write-Host "Discord updated while launching. Patching the new version once more." -ForegroundColor Yellow
         Stop-Discord
-        Invoke-Checked $installer @("-install", "-branch", "stable", "-debug")
+        Install-Vencord
         $installedApp = Get-LatestDiscordApp
         Assert-Patched $installedApp.FullName
         $logOffset = Get-LogOffset
