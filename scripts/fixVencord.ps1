@@ -92,6 +92,16 @@ function Install-Vencord {
     $env:VENCORD_DEV_INSTALL = "1"
     try {
         Invoke-Checked $installer @("-install", "-branch", "stable", "-debug")
+        $installedApp = Get-LatestDiscordApp
+        try {
+            Assert-Patched $installedApp.FullName
+        } catch {
+            Write-Host "The dev installer did not patch Discord. Retrying with standard install, then restoring the local build." -ForegroundColor Yellow
+            Remove-Item Env:VENCORD_DEV_INSTALL -ErrorAction SilentlyContinue
+            Invoke-Checked $installer @("-install", "-branch", "stable", "-debug")
+            Invoke-Checked "pnpm" @("build")
+            Assert-Patched $installedApp.FullName
+        }
     } finally {
         Remove-Item Env:VENCORD_USER_DATA_DIR -ErrorAction SilentlyContinue
         Remove-Item Env:VENCORD_DEV_INSTALL -ErrorAction SilentlyContinue
