@@ -6,7 +6,7 @@
 
 import { ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
 import { IconComponent } from "@utils/types";
-import { ChannelStore, GuildStore, showToast, Toasts, useEffect, useReducer } from "@webpack/common";
+import { ChannelStore, GuildStore, showToast, useEffect, useReducer } from "@webpack/common";
 
 import { downloadJson, exportSelectedMessages } from "./exportUtils";
 import { selectionStore } from "./selectionStore";
@@ -34,7 +34,7 @@ export const SelectionBar: ChatBarButtonFactory = ({ isMainChat }) => {
     function handleExport() {
         const { channelId, selectedIds } = selectionStore;
         if (!channelId || !selectedIds.size) {
-            showToast("Select at least one message first.", Toasts.Type.FAILURE);
+            showToast({ text: "Select at least one message first.", variant: "critical" });
             return;
         }
 
@@ -53,7 +53,7 @@ export const SelectionBar: ChatBarButtonFactory = ({ isMainChat }) => {
         const safeName = channelName.replace(/[^a-zA-Z0-9_-]/g, "_");
         downloadJson(result, `${safeName}-selection-${new Date().toISOString().slice(0, 10)}.json`);
 
-        showToast(`Exported ${result.messageCount} message${result.messageCount !== 1 ? "s" : ""}!`, Toasts.Type.SUCCESS);
+        showToast({ text: `Exported ${result.messageCount} message${result.messageCount !== 1 ? "s" : ""}!`, variant: "success" });
         selectionStore.exit();
     }
 

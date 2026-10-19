@@ -24,24 +24,7 @@ import {
 } from "@utils/modal";
 import type { Channel } from "@vencord/discord-types";
 import { findByCodeLazy, findByPropsLazy } from "@webpack";
-import {
-    Alerts,
-    Button,
-    Clickable,
-    ContextMenuApi,
-    FluxDispatcher,
-    Forms,
-    GuildStore,
-    Menu,
-    MessageActions,
-    React,
-    RestAPI,
-    ScrollerThin,
-    TextInput,
-    Toasts,
-    Tooltip,
-    UserStore,
-} from "@webpack/common";
+import { Alerts, Button, Clickable, ContextMenuApi, FluxDispatcher, Forms, GuildStore, Menu, MessageActions, React, RestAPI, ScrollerThin, showToast, TextInput, Tooltip, UserStore } from "@webpack/common";
 
 import {
     addRecentSticker,
@@ -202,10 +185,9 @@ const ensureStickerGuild = async (): Promise<string | null> => {
             `Failed to create 'Vencord Local Stickers' ${getIntlMessage("GUILD").toLowerCase()}:`,
             error,
         );
-        Toasts.show({
-            message: getPluginIntlMessage("STICKER_GUILD_CREATE_FAILED_BODY"),
-            id: Toasts.genId(),
-            type: Toasts.Type.FAILURE,
+        showToast({
+            text: getPluginIntlMessage("STICKER_GUILD_CREATE_FAILED_BODY"),
+            variant: "critical",
         });
         return null;
     }
@@ -284,10 +266,9 @@ const uploadSticker = async (
             ((error as { body?: { message: string; }; })?.body?.message) ||
             (error as Error).message ||
             getIntlMessage("UNKNOWN_ERROR");
-        Toasts.show({
-            message: `${getPluginIntlMessage("STICKER_UPLOAD_FAILED")}: ${errorMessage}`,
-            id: Toasts.genId(),
-            type: Toasts.Type.FAILURE,
+        showToast({
+            text: `${getPluginIntlMessage("STICKER_UPLOAD_FAILED")}: ${errorMessage}`,
+            variant: "critical",
         });
         return null;
     }
@@ -1362,10 +1343,9 @@ const StickerPickerModal: React.FC<StickerPickerModalProps> = ({
             await saveFavorites(newFavoriteIds);
         }
 
-        Toasts.show({
-            message: getPluginIntlMessage("STICKER_MOVED_TO_CATEGORY").replace("{category}", targetCategory),
-            type: Toasts.Type.SUCCESS,
-            id: Toasts.genId()
+        showToast({
+            text: getPluginIntlMessage("STICKER_MOVED_TO_CATEGORY").replace("{category}", targetCategory),
+            variant: "success",
         });
     }, [allCategories, favoriteIds, isClosing, resetStickerDrag]);
 

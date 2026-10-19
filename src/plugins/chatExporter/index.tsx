@@ -12,7 +12,7 @@ import { Devs } from "@utils/constants";
 import { openModal } from "@utils/modal";
 import definePlugin from "@utils/types";
 import { Message } from "@vencord/discord-types";
-import { ChannelStore, Menu, showToast, Toasts } from "@webpack/common";
+import { ChannelStore, Menu, showToast } from "@webpack/common";
 
 import { ExportModal, setDmUserRow } from "./ExportModal";
 import { getEarliestDmDate } from "./exportUtils";
@@ -55,7 +55,7 @@ const messageCtxPatch: NavContextMenuPatchCallback = (children, { message }: { m
                         const initialFrom = await getEarliestDmDate();
                         openModal(props => <ExportModal rootProps={props} allDms initialFrom={initialFrom} />);
                     } catch (error) {
-                        showToast("Could not find the earliest DM: " + String(error), Toasts.Type.FAILURE);
+                        showToast({ text: "Could not find the earliest DM: " + String(error), variant: "critical" });
                     }
                 }}
             />

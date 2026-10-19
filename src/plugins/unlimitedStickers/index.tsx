@@ -17,7 +17,7 @@ import { ModalCloseButton, ModalContent, ModalHeader, type ModalProps, ModalRoot
 import definePlugin, { OptionType, type PluginNative } from "@utils/types";
 import { chooseFile, saveFile } from "@utils/web";
 import type { Channel } from "@vencord/discord-types";
-import { Alerts, ChannelStore, Checkbox, React, ScrollerThin, SelectedChannelStore, Toasts, UserStore } from "@webpack/common";
+import { Alerts, ChannelStore, Checkbox, React, ScrollerThin, SelectedChannelStore, showToast, UserStore } from "@webpack/common";
 import { nanoid } from "nanoid";
 
 import { getPluginIntlMessage } from "./intl";
@@ -120,11 +120,11 @@ export const scanStickerText = async (): Promise<void> => {
     const categories = await getLibrary();
     const pending = categories.flatMap(c => c.files).filter(f => f.ocrText === undefined);
     if (pending.length === 0) {
-        Toasts.show({ message: "All stickers are already scanned.", type: Toasts.Type.MESSAGE, id: Toasts.genId() });
+        showToast({ text: "All stickers are already scanned.", variant: "default" });
         return;
     }
 
-    Toasts.show({ message: `Scanning text on ${pending.length} sticker${pending.length === 1 ? "" : "s"}...`, type: Toasts.Type.MESSAGE, id: Toasts.genId() });
+    showToast({ text: `Scanning text on ${pending.length} sticker${pending.length === 1 ? "" : "s"}...`, variant: "default" });
 
     let scanned = 0;
     for (let i = 0; i < pending.length; i += OCR_CHUNK_SIZE) {
@@ -138,8 +138,7 @@ export const scanStickerText = async (): Promise<void> => {
 
         const response = await Native.ocrImages(images);
         if (response.error) {
-            Toasts.pop();
-            Toasts.show({ message: `Sticker text scan failed: ${response.error}`, type: Toasts.Type.FAILURE, id: Toasts.genId() });
+            showToast({ text: `Sticker text scan failed: ${response.error}`, variant: "critical" });
             return;
         }
 
@@ -157,12 +156,10 @@ export const scanStickerText = async (): Promise<void> => {
         );
 
         scanned += chunk.length;
-        Toasts.pop();
-        Toasts.show({ message: `Scanning sticker text... ${scanned}/${pending.length}`, type: Toasts.Type.MESSAGE, id: Toasts.genId() });
+        showToast({ text: `Scanning sticker text... ${scanned}/${pending.length}`, variant: "default" });
     }
 
-    Toasts.pop();
-    Toasts.show({ message: `Scanned text on ${pending.length} sticker${pending.length === 1 ? "" : "s"}.`, type: Toasts.Type.SUCCESS, id: Toasts.genId() });
+    showToast({ text: `Scanned text on ${pending.length} sticker${pending.length === 1 ? "" : "s"}.`, variant: "success" });
 };
 
 const normalizeSticker = async (file: File): Promise<Blob | null> => {
@@ -289,10 +286,9 @@ const ReorderCategoriesModal: React.FC<ReorderCategoriesModalProps> = ({ onClose
         await saveCategoryOrder(newOrder);
         onReorder(newOrder);
         onClose();
-        Toasts.show({
-            message: "Category order saved successfully",
-            type: Toasts.Type.SUCCESS,
-            id: Toasts.genId()
+        showToast({
+            text: "Category order saved successfully",
+            variant: "success",
         });
     };
 
@@ -405,7 +401,7 @@ const StickerManagementSetting: React.FC = () => {
         const { files } = event.target;
         if (!files || files.length === 0) return;
 
-        Toasts.show({ message: `Processing ${files.length} files...`, id: Toasts.genId(), type: Toasts.Type.MESSAGE });
+        showToast({ text: `Processing ${files.length} files...`, variant: "default" });
 
         const filesByDir = new Map<string, File[]>();
         for (const file of Array.from(files)) {
@@ -424,7 +420,7 @@ const StickerManagementSetting: React.FC = () => {
         }
 
         if (filesByDir.size === 0) {
-            Toasts.show({ message: "No supported image files found in the selected folder(s).", id: Toasts.genId(), type: Toasts.Type.FAILURE });
+            showToast({ text: "No supported image files found in the selected folder(s).", variant: "critical" });
             return;
         }
 
@@ -450,10 +446,9 @@ const StickerManagementSetting: React.FC = () => {
         }
 
         if (skipped.length > 0) {
-            Toasts.show({
-                message: `Skipped ${skipped.length} file${skipped.length === 1 ? "" : "s"} (unreadable or over 512KB): ${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "…" : ""}`,
-                type: Toasts.Type.FAILURE,
-                id: Toasts.genId(),
+            showToast({
+                text: `Skipped ${skipped.length} file${skipped.length === 1 ? "" : "s"} (unreadable or over 512KB): ${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "…" : ""}`,
+                variant: "critical",
             });
         }
 
@@ -480,7 +475,7 @@ const StickerManagementSetting: React.FC = () => {
         });
 
         const totalStickers = stickerDataToSave.length;
-        Toasts.show({ message: `Added ${totalStickers} stickers across ${newCategories.length} categories.`, type: Toasts.Type.SUCCESS, id: Toasts.genId() });
+        showToast({ text: `Added ${totalStickers} stickers across ${newCategories.length} categories.`, variant: "success" });
         if (event.target) event.target.value = "";
         fetchCategories();
         scanStickerText().catch(e => logger.error("Sticker text scan failed:", e));
@@ -498,10 +493,9 @@ const StickerManagementSetting: React.FC = () => {
         }
         const totalStickers = deletedStickerIds.length;
 
-        Toasts.show({
-            message: `Deleting ${categoryNames.length} categor${categoryNames.length === 1 ? "y" : "ies"} and ${totalStickers} sticker${totalStickers === 1 ? "" : "s"}...`,
-            type: Toasts.Type.MESSAGE,
-            id: Toasts.genId(),
+        showToast({
+            text: `Deleting ${categoryNames.length} categor${categoryNames.length === 1 ? "y" : "ies"} and ${totalStickers} sticker${totalStickers === 1 ? "" : "s"}...`,
+            variant: "default",
         });
 
         const remainingCategories = categories.filter(cat => {
@@ -520,8 +514,7 @@ const StickerManagementSetting: React.FC = () => {
         await saveFavorites((await getFavorites()).filter(id => !deletedIdSet.has(id)));
         await removeRecentStickers(deletedStickerIds);
 
-        Toasts.pop();
-        Toasts.show({ message: `Deleted ${categoryNames.length} categor${categoryNames.length === 1 ? "y" : "ies"} and their stickers.`, type: Toasts.Type.SUCCESS, id: Toasts.genId() });
+        showToast({ text: `Deleted ${categoryNames.length} categor${categoryNames.length === 1 ? "y" : "ies"} and their stickers.`, variant: "success" });
         fetchCategories();
         setSelectedCategories(new Set());
     };
@@ -801,10 +794,9 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
         const categoriesToImport = importData.categories.filter(c => selectedCategories.has(c.name));
         const totalFiles = categoriesToImport.reduce((sum, cat) => sum + cat.files.length, 0);
 
-        Toasts.show({
-            message: `Importing ${selectedCategories.size} categor${selectedCategories.size === 1 ? "y" : "ies"} and ${totalFiles} file${totalFiles === 1 ? "" : "s"}...`,
-            type: Toasts.Type.MESSAGE,
-            id: Toasts.genId(),
+        showToast({
+            text: `Importing ${selectedCategories.size} categor${selectedCategories.size === 1 ? "y" : "ies"} and ${totalFiles} file${totalFiles === 1 ? "" : "s"}...`,
+            variant: "default",
         });
 
         try {
@@ -870,20 +862,16 @@ const ImportSelectionModal: React.FC<ModalProps & { importData: StickerExportDat
 
             const totalFavorites = importData.favorites?.filter(id => selectedStickerIds.has(id)).length ?? 0;
 
-            Toasts.pop();
-            Toasts.show({
-                message: `Imported ${selectedCategories.size} categor${selectedCategories.size === 1 ? "y" : "ies"} with ${totalFiles} sticker${totalFiles === 1 ? "" : "s"}${totalFavorites > 0 ? ` and ${totalFavorites} favorite${totalFavorites === 1 ? "" : "s"}` : ""}.`,
-                type: Toasts.Type.SUCCESS,
-                id: Toasts.genId(),
+            showToast({
+                text: `Imported ${selectedCategories.size} categor${selectedCategories.size === 1 ? "y" : "ies"} with ${totalFiles} sticker${totalFiles === 1 ? "" : "s"}${totalFavorites > 0 ? ` and ${totalFavorites} favorite${totalFavorites === 1 ? "" : "s"}` : ""}.`,
+                variant: "success",
             });
             onImported?.();
         } catch (error) {
             logger.error("Failed to import selected stickers:", error);
-            Toasts.pop();
-            Toasts.show({
-                message: `Failed to import stickers: ${error instanceof Error ? error.message : String(error)}`,
-                type: Toasts.Type.FAILURE,
-                id: Toasts.genId(),
+            showToast({
+                text: `Failed to import stickers: ${error instanceof Error ? error.message : String(error)}`,
+                variant: "critical",
             });
         }
     };
@@ -950,10 +938,9 @@ export const exportStickers = async (categoryNames?: string[]): Promise<void> =>
         const totalCategories = categories.length;
         const totalStickers = stickerIds.size;
 
-        Toasts.show({
-            message: `Exporting ${totalCategories} categor${totalCategories === 1 ? "y" : "ies"} and ${totalStickers} sticker${totalStickers === 1 ? "" : "s"}...`,
-            type: Toasts.Type.MESSAGE,
-            id: Toasts.genId(),
+        showToast({
+            text: `Exporting ${totalCategories} categor${totalCategories === 1 ? "y" : "ies"} and ${totalStickers} sticker${totalStickers === 1 ? "" : "s"}...`,
+            variant: "default",
         });
 
         const ids = Array.from(stickerIds);
@@ -982,18 +969,15 @@ export const exportStickers = async (categoryNames?: string[]): Promise<void> =>
             saveFile(new File([data], filename, { type: "application/json" }));
         }
 
-        Toasts.pop();
-        Toasts.show({
-            message: `Exported ${totalCategories} categor${totalCategories === 1 ? "y" : "ies"} with ${totalStickers} sticker${totalStickers === 1 ? "" : "s"}.`,
-            type: Toasts.Type.SUCCESS,
-            id: Toasts.genId(),
+        showToast({
+            text: `Exported ${totalCategories} categor${totalCategories === 1 ? "y" : "ies"} with ${totalStickers} sticker${totalStickers === 1 ? "" : "s"}.`,
+            variant: "success",
         });
     } catch (error) {
         logger.error("Failed to export stickers:", error);
-        Toasts.show({
-            message: "Failed to export stickers. Check console for details.",
-            type: Toasts.Type.FAILURE,
-            id: Toasts.genId(),
+        showToast({
+            text: "Failed to export stickers. Check console for details.",
+            variant: "critical",
         });
     }
 };
@@ -1031,10 +1015,9 @@ export const importStickers = async (onImported?: () => void): Promise<void> => 
         ));
     } catch (error) {
         logger.error("Failed to open import selection:", error);
-        Toasts.show({
-            message: `Failed to open import selection: ${error instanceof Error ? error.message : String(error)}`,
-            type: Toasts.Type.FAILURE,
-            id: Toasts.genId(),
+        showToast({
+            text: `Failed to open import selection: ${error instanceof Error ? error.message : String(error)}`,
+            variant: "critical",
         });
     }
 };
@@ -1108,10 +1091,9 @@ const openPickerIfNitro = (channel: Channel) => {
     if (UserStore.getCurrentUser()?.premiumType) {
         openStickerPicker(channel);
     } else {
-        Toasts.show({
-            message: getPluginIntlMessage("NITRO_REQUIRED_BODY"),
-            id: Toasts.genId(),
-            type: Toasts.Type.FAILURE,
+        showToast({
+            text: getPluginIntlMessage("NITRO_REQUIRED_BODY"),
+            variant: "critical",
         });
     }
 };

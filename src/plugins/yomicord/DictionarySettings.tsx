@@ -9,7 +9,7 @@ import { Divider } from "@components/Divider";
 import { Heading } from "@components/Heading";
 import { Paragraph } from "@components/Paragraph";
 import { Span } from "@components/Span";
-import { Alerts, TextInput, Toasts, useEffect, useRef, useState } from "@webpack/common";
+import { Alerts, showToast, TextInput, useEffect, useRef, useState } from "@webpack/common";
 
 import { deleteDictionary, getDictionaryPriorities, getInstalledDictionaries, importMultipleDictionaryFiles, updateDictionaryPriority } from "./dictionary";
 import { readZipEntries } from "./zip";
@@ -67,18 +67,16 @@ export function DictionarySettings() {
                     (current, total, stage) => setProgress({ current, total, stage })
                 );
                 if (!result.success) throw new Error(result.error ?? "Import failed");
-                Toasts.show({
-                    message: `Imported "${name}" (${result.imported} file(s))`,
-                    id: Toasts.genId(),
-                    type: Toasts.Type.SUCCESS
+                showToast({
+                    text: `Imported "${name}" (${result.imported} file(s))`,
+                    variant: "success",
                 });
             }
             await loadDictionaries();
         } catch (error) {
-            Toasts.show({
-                message: `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
-                id: Toasts.genId(),
-                type: Toasts.Type.FAILURE
+            showToast({
+                text: `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
+                variant: "critical",
             });
         } finally {
             setUploading(false);
@@ -95,10 +93,9 @@ export function DictionarySettings() {
             cancelText: "Cancel",
             onConfirm: async () => {
                 await deleteDictionary(name);
-                Toasts.show({
-                    message: `Dictionary "${name}" deleted`,
-                    id: Toasts.genId(),
-                    type: Toasts.Type.SUCCESS
+                showToast({
+                    text: `Dictionary "${name}" deleted`,
+                    variant: "success",
                 });
                 await loadDictionaries();
             }

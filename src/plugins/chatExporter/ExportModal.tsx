@@ -9,7 +9,7 @@ import "./styles.css";
 import { ModalCloseButton, ModalContent, ModalFooter, ModalHeader, type ModalProps, ModalRoot, ModalSize } from "@utils/modal";
 import type { Channel, User } from "@vencord/discord-types";
 import { findComponentByCodeLazy } from "@webpack";
-import { Button, ChannelStore, Forms, GuildStore, moment, ScrollerThin, showToast, TextInput, Toasts, useEffect, UserStore, useState } from "@webpack/common";
+import { Button, ChannelStore, Forms, GuildStore, moment, ScrollerThin, showToast, TextInput, useEffect, UserStore, useState } from "@webpack/common";
 import type { Moment } from "moment";
 import type { ComponentType } from "react";
 
@@ -88,7 +88,7 @@ export function ExportModal({ rootProps, channel, initialFrom, allDms }: ExportM
                 setDmRecipients(current => [...new Map([...current, ...discoveredUsers].map(user => [user.id, user])).values()]);
             })
             .catch(error => {
-                if (!controller.signal.aborted) showToast("Could not find closed DMs: " + String(error), Toasts.Type.FAILURE);
+                if (!controller.signal.aborted) showToast({ text: "Could not find closed DMs: " + String(error), variant: "critical" });
             })
             .finally(() => {
                 if (!controller.signal.aborted) setIsLoadingDms(false);
@@ -111,11 +111,11 @@ export function ExportModal({ rootProps, channel, initialFrom, allDms }: ExportM
         const limit = !allDms && limitStr.trim() ? parseInt(limitStr.trim(), 10) : undefined;
 
         if (from > until) {
-            showToast("'From' must be before 'Until'.", Toasts.Type.FAILURE);
+            showToast({ text: "'From' must be before 'Until'.", variant: "critical" });
             return;
         }
         if (!allDms && limitStr.trim() && (!limit || limit <= 0)) {
-            showToast("Message limit must be a positive number.", Toasts.Type.FAILURE);
+            showToast({ text: "Message limit must be a positive number.", variant: "critical" });
             return;
         }
 
@@ -127,7 +127,7 @@ export function ExportModal({ rootProps, channel, initialFrom, allDms }: ExportM
             if (allDms) {
                 const { channels, messageCount } = await fetchAllDmMessages(options, excludedUserIds, setProgress);
                 if (!channels.length) {
-                    showToast("No DMs found in this date range.", Toasts.Type.MESSAGE);
+                    showToast({ text: "No DMs found in this date range.", variant: "default" });
                     return;
                 }
                 downloadJson({
@@ -138,7 +138,7 @@ export function ExportModal({ rootProps, channel, initialFrom, allDms }: ExportM
                     channels,
                     messageCount,
                 }, `all-dms-${fromDate.format("YYYY-MM-DD")}-to-${untilDate.format("YYYY-MM-DD")}.json`);
-                showToast(`Exported ${messageCount} messages from ${channels.length} DMs!`, Toasts.Type.SUCCESS);
+                showToast({ text: `Exported ${messageCount} messages from ${channels.length} DMs!`, variant: "success" });
             } else {
                 const messages = await fetchMessages(channel.id, options, setProgress);
                 const channelName = getChannelName(channel);
@@ -149,12 +149,12 @@ export function ExportModal({ rootProps, channel, initialFrom, allDms }: ExportM
                     messageCount: messages.length,
                     messages,
                 }, `${channelName.replace(/[^a-zA-Z0-9_-]/g, "_")}-${new Date().toISOString().slice(0, 10)}.json`);
-                showToast(`Exported ${messages.length} messages!`, Toasts.Type.SUCCESS);
+                showToast({ text: `Exported ${messages.length} messages!`, variant: "success" });
             }
 
             rootProps.onClose();
         } catch (error) {
-            showToast("Export failed: " + String(error), Toasts.Type.FAILURE);
+            showToast({ text: "Export failed: " + String(error), variant: "critical" });
         } finally {
             setIsExporting(false);
         }
